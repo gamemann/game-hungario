@@ -319,6 +319,16 @@ func _seed_spawn_points() -> void:
 			var angle := TAU * float(step) / 12.0
 			var at := centre + Vector2(cos(angle), sin(angle)) \
 				* bounds.size * 0.5 * float(ring)
+
+			# Out of the level's geometry, because two of these three rings pass straight
+			# through Warrens' ring of rocks — a spawn point inside a rock is a hunter
+			# that appears inside one, and the push-out above would then shove it out at
+			# the first tick in a direction nobody chose.
+			if world.layout != null and not world.layout.is_empty():
+				at = world.layout.nearest_clear(
+					at, radius_of(&"stalker"), bounds
+				)
+
 			points.append(DotNpcInstance.to_plane(at))
 
 	director.spawn_points = points
@@ -362,10 +372,47 @@ func tick(delta: float) -> void:
 	spawner.tick(delta)
 	director.tick(delta)
 
+	# After the steering and before the eating, which is the same ordering argument
+	# [HungryWorld.tick] makes about the players: a hunter has to be stopped by a rock
+	# before it is asked whether it has reached anybody, or it eats through a wall for one
+	# tick every time it walks into one.
+	_keep_out_of_the_level()
+
 	_resolve_eating()
 
 	if _tick % BROADCAST_EVERY == 0:
 		_broadcast_all()
+
+
+## Pushes every hunter out of the level's own geometry.
+##
+## [b]A push-out rather than a path around, and that is a limitation worth naming.[/b]
+## dot-npc's steering knows about its navigation data and this game builds none — every
+## world here was an empty box until Warrens, so a hunter that steered straight at its
+## target was a hunter that was right. With geometry in the way it is no longer right, and
+## the honest fix is navigation data generated from the layout the way dot-timer generates
+## its zones. What this does instead is stop a hunter being INSIDE a rock, which is the
+## part a player can see; what it does not do is stop one pressing against the far side of
+## one while its target stands behind it.
+##
+## Server side only. A hunter's position is broadcast rather than derived, so a client that
+## mirrors one is mirroring a position that has already been pushed out.
+func _keep_out_of_the_level() -> void:
+	if world == null or world.layout == null or world.layout.is_empty():
+		return
+
+	var bounds := world.arena.bounds if world.arena != null else Rect2()
+
+	for npc in spawner.all_npcs():
+		if not npc.is_alive() or not (npc.node is Node2D):
+			continue
+
+		var body := npc.node as Node2D
+		var radius := radius_of(npc.def.id) if npc.def != null else 0.0
+		var clear := world.layout.nearest_clear(body.global_position, radius, bounds)
+
+		if not clear.is_equal_approx(body.global_position):
+			body.global_position = clear
 
 
 ## Everybody a hunter might notice, as dot-npc's candidates.

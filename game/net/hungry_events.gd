@@ -117,6 +117,10 @@ static func _read_position(reader: DotNetReader) -> Vector2:
 ## about.
 const PACK_URL_BYTES := 256
 
+## Largest layout id a server may name. A layout id is a short name, and an id this build
+## does not know builds an empty layout rather than failing — see [HungryLayout.for_id].
+const LAYOUT_BYTES := 32
+
 static func write_hello(
 	world_seed: int,
 	tick_rate: int,
@@ -124,7 +128,8 @@ static func write_hello(
 	peer_id: int,
 	server_tick: int,
 	world_size: Vector2,
-	pack_url: String = ""
+	pack_url: String = "",
+	layout: StringName = &""
 ) -> PackedByteArray:
 	var writer := _writer()
 	writer.write_varint(world_seed)
@@ -139,6 +144,10 @@ static func write_hello(
 	# parts, and because a client that had to be told out of band is a client that will
 	# not be.
 	writer.write_string(pack_url, PACK_URL_BYTES)
+	# Which level's geometry is standing in the world. A NAME, not the geometry: both ends
+	# build the same discs from it, the way both ends build the same food field from the
+	# seed above. See [HungryLayout].
+	writer.write_string(String(layout), LAYOUT_BYTES)
 	return writer.to_bytes()
 
 
@@ -151,6 +160,7 @@ static func read_hello(reader: DotNetReader) -> Dictionary:
 		"tick": reader.read_uint(32),
 		"world_size": Vector2(reader.read_float32(), reader.read_float32()),
 		"pack_url": reader.read_string(PACK_URL_BYTES),
+		"layout": reader.read_string(LAYOUT_BYTES),
 	}
 	out["ok"] = reader.ok()
 	return out

@@ -498,7 +498,7 @@ leaving: `extend_needs_majority` (two documented policies, one behaviour),
 can never do anything), and `begin_on_apply` (both the director and the host announcing one
 play halves every cooldown).
 
-## Three modes, and the third one is a shape
+## Four modes, and the last two are shapes rather than dials
 
 `classic` and `frenzy` are the same square at two sizes: bigger and slower, smaller and
 faster, with `merge_delay_sec` deciding whether splitting is a commitment or a move.
@@ -519,8 +519,21 @@ invisible. `headless_round`'s **the gauntlet** section walks a monster into all 
 length of the corridor, then measures the span of the food that actually exists rather
 than its count.
 
-Nothing was wrong. Twelve checks that would have passed on a square whether or not the
-code were right now pass on a shape where they mean something.
+Nothing was wrong. Twelve checks that would have passed on a square whether or not the code were right now pass on a shape where they mean something.
+
+**`warrens` is the first world with anything standing in it, and the mechanic is that mass IS radius.** The other three are empty boxes: the only thing between two monsters is distance, so being caught is a failure of speed and the leader catches everybody eventually. Warrens puts a ring of eight rocks around the middle with 360-unit gates between them, and a gate is a *mass limit* — it admits a radius under 180, which on this curve is about 500 mass against a winning mass of 1600. The good middle of the map is open to the players who are behind and shut to the player who is ahead, which is a catch-up mechanic made out of geometry rather than out of a rule, and no dial in `HungryPreset` could have produced it.
+
+The leader is not locked out, and that is the other half. Half the mass is `1/sqrt(2)` of the radius, so splitting fits — at the cost of `merge_delay_sec`, in the one part of the map where being in two halves is most dangerous. A pepper does the same thing to somebody else against their will, which makes a throwable a way through a wall as well as a way into a fight.
+
+**The geometry is derived on both ends and never replicated.** `HungryLayout.for_id(id, bounds)` is a pure function, the hello carries the *name*, and a client builds the same discs the server pushes it out of — the same trick `Dot2DScatter` plays with the food and for the same reason. `HungryHazards` is deliberately not this: a hazard is placed at runtime by an operator or the director, so it travels, it is owned and it can be cleared. A layout is the map.
+
+Three things a layout makes true that an empty box never did, all of which are in `HungryWorld`:
+
+- **The push-out is on the prediction path.** `block_piece` runs inside `simulate_piece`, immediately after the motor, because a reconciliation replays that call — a push the authority applied outside it would make every tick spent against a rock a misprediction, and the correction would ease the player back into the rock they are standing against. It reads as packet loss, which sends the next person to the netcode.
+- **The field is culled against it.** A crumb inside a rock cannot be eaten and never expires, so it holds its slot against the field's budget for ever and the mode quietly runs at seven eighths of the food it claims. `_cull_blocked` takes them back on the tick they are placed, which costs nothing on the wire because the field's delta already cancels an id added and taken between two snapshots.
+- **A spawn is moved rather than refused.** Every producer of a spawn point here knows about monsters and nothing about rocks, and a rock covers an eighth of a warren.
+
+**The hunters get a push-out and not a path, and that is a named limitation.** dot-npc steers straight at its target because every world here was an empty box; with geometry in the way the honest fix is navigation data generated from the layout the way dot-timer generates its zones. `_keep_out_of_the_level` stops a hunter being *inside* a rock, which is the part a player can see. It does not stop one pressing against the far side of one.
 
 ## Game switching: the world is the scene, the manager is not
 
@@ -622,7 +635,7 @@ find . -name '*.gd' -not -path './.godot/*' -not -path './addons/*' | while read
     godot --headless --path . --check-only --script "res://${f#./}"
 done
 
-godot --headless --path . res://examples/headless_round.tscn   # 208 — the game
+godot --headless --path . res://examples/headless_round.tscn   # 228 — the game
 godot --headless --path . res://examples/headless_stack.tscn   #  24 checks
 godot --headless --path . res://examples/headless_net.tscn     # 126 — the netcode
 godot --headless --path . res://examples/dedicated.tscn        # 158 — a real DotServer
@@ -631,7 +644,7 @@ godot --headless --path . res://examples/content.tscn          #  45 — the clo
 godot --headless --path . res://examples/headless_presentation.tscn  # 48 — the client half
 ```
 
-642 checks. Add `-- --verbose` to `dedicated`, `sandbox` or `content` when one fails and
+662 checks. Add `-- --verbose` to `dedicated`, `sandbox` or `content` when one fails and
 the reason is in a log line rather than in the assertion.
 
 **Run `headless_round` after any change to dot-2d** and **`headless_net` after any change
@@ -652,6 +665,17 @@ everything that decides what one player is told about another — interest, the 
 join broadcast, the spawn events — is per-observer, and every one of them is trivially
 correct with one observer. Two people seeing each other is the thing a multiplayer game
 must do and the thing nothing in this family had ever checked.
+
+## Looking at a level
+
+```bash
+tools/screenshot_map.sh warrens        # the whole arena, a player's view, and a grown one
+tools/screenshot_menus.sh              # the screens
+```
+
+**Every check this project has over a mode asserts a simulated value**, and a level that is the wrong scale, drawn in the wrong place or not drawn at all passes every one of them. `tools/screenshot_map.sh` renders three framings of a mode because a level is three different claims: the whole arena says the shape reads, a player's own view says the scale does, and the grown view says it still draws once the camera has zoomed out.
+
+**The third one found a bug the first night it existed.** `HungryRenderer._view` and dot-2d's `Dot2DCameraRig` both computed the visible rectangle as the viewport *multiplied* by the zoom. Godot's `Camera2D.zoom` is a magnification — a zoom of 2 covers half the world, not twice it — so both were wrong by the square of the zoom in area, and the zoom here only leaves 1.0 once the player has grown. A monster at half the winning mass sees 2100 units across and had everything past 400 of them culled: most of the screen simply stopped being drawn, on a black background, which reads as an empty arena rather than as a rendering fault. 705 checks across six suites passed before and after.
 
 ## Playing it
 

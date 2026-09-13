@@ -1141,8 +1141,8 @@ func _test_vote() -> void:
 
 	_check(maps != null, "the map rotation is up")
 	_check(
-		maps.catalogue != null and maps.catalogue.size() == 3,
-		"with three modes in the catalogue (%d)"
+		maps.catalogue != null and maps.catalogue.size() == 4,
+		"with four modes in the catalogue (%d)"
 			% (maps.catalogue.size() if maps.catalogue != null else -1)
 	)
 	_check(
@@ -1166,7 +1166,7 @@ func _test_vote() -> void:
 	_check(
 		next != StringName(_module().world.preset.id),
 		"and it is not what is playing now",
-		"a cooldown of one over three modes is what stops the same one twice running"
+		"a cooldown of one over four modes is what stops the same one twice running"
 	)
 
 	# Rocking the vote with one player. The threshold is a fraction of the head count and

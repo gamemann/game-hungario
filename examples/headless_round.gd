@@ -11,6 +11,7 @@ const HungryInput := preload("../game/client/hungry_input.gd")
 const HungryMenus := preload("../game/client/hungry_menus.gd")
 const HungryMonster := preload("../game/hungry_monster.gd")
 const HungryNetCommand := preload("../game/net/hungry_net_command.gd")
+const HungryLayout := preload("../game/hungry_layout.gd")
 const HungryPreset := preload("../game/hungry_preset.gd")
 const HungryProjectile := preload("../game/hungry_projectile.gd")
 const HungryRenderer := preload("../game/client/hungry_renderer.gd")
@@ -36,7 +37,7 @@ const HungryWorld := preload("../game/hungry_world.gd")
 const SEED := 20260828
 const TICK_RATE := 60
 
-const CHECKS := 208
+const CHECKS := 228
 
 var _passed := 0
 var _failed := 0
@@ -87,6 +88,7 @@ func _run() -> void:
 	_test_rider()
 	_test_interface()
 	_test_the_gauntlet()
+	_test_the_warrens()
 	_test_spectating()
 
 	print("")
@@ -1300,6 +1302,277 @@ func _test_the_gauntlet() -> void:
 		"and the food is spread over the whole of it",
 		"%.0f by %.0f in a %.0f by %.0f room"
 			% [spread_x, spread_y, bounds.size.x, bounds.size.y]
+	)
+
+	_drop(world)
+	_done()
+
+
+func _test_the_warrens() -> void:
+	_section("the warrens")
+
+	var preset := HungryPreset.warrens()
+
+	if not _check(preset.validate().ok, "the preset is usable"):
+		_done()
+		return
+
+	_check(
+		preset.layout == HungryLayout.WARRENS,
+		"and it is the first mode that asks for any geometry at all",
+		"layout %s" % String(preset.layout)
+	)
+	_check(
+		HungryPreset.classic().layout == HungryLayout.NONE
+			and HungryPreset.frenzy().layout == HungryLayout.NONE
+			and HungryPreset.gauntlet().layout == HungryLayout.NONE,
+		"and the three that came before it are still empty boxes",
+		"a layout nobody asked for would change every mode in the game"
+	)
+
+	var world := _make_world(preset, SEED + 57)
+	_settle(world)
+
+	var bounds := world.arena.bounds
+	var layout := world.layout
+
+	if not _check(layout != null and layout.count() == 12, "twelve rocks stand in it"):
+		_drop(world)
+		_done()
+		return
+
+	# [b]Derived and not stored, which is what makes it free on the wire.[/b] The same id
+	# and the same rectangle have to produce the same discs every time, because that is the
+	# only reason a client can be told a name instead of a hundred and forty-four bytes of
+	# circles.
+	var again := HungryLayout.for_id(HungryLayout.WARRENS, bounds)
+	var identical := again.count() == layout.count()
+
+	for index in range(mini(again.count(), layout.count())):
+		if not again.blocks[index].is_equal_approx(layout.blocks[index]):
+			identical = false
+
+	_check(identical, "and a second build of the same layout is the same rocks")
+
+	# Everything is inside the arena. A rock half outside the wall is a rock a player is
+	# pushed through the boundary by.
+	var inside := true
+
+	for block in layout.blocks:
+		var at := Vector2(block.x, block.y)
+
+		if not bounds.grow(-block.z).has_point(at):
+			inside = false
+
+	_check(inside, "and every one of them is wholly inside the arena")
+
+	# --- The gate, which is the level ---------------------------------------
+
+	# [b]The one number the design rests on.[/b] Mass IS radius here, so a gap is a mass
+	# limit: `radius_for` inverted says who fits. The gates are meant to be open to a
+	# player who is behind and shut to the player who is ahead, and a constant changed
+	# without meaning to would quietly make the middle open to everybody or to nobody.
+	var rules := world.tunables.mass_rules
+	var fits := layout.fits_through()
+	var admits := fits * fits / (rules.base_radius * rules.base_radius)
+
+	_check(
+		admits > preset.win_mass * 0.2 and admits < preset.win_mass * 0.45,
+		"the gates admit a monster of about a third of the winning mass",
+		"%.0f of %.0f, through a %.0f unit gap" % [admits, preset.win_mass, fits * 2.0]
+	)
+	_check(
+		rules.radius_for(preset.win_mass) > fits,
+		"so a monster that has won cannot fit through one",
+		"%.0f against %.0f" % [rules.radius_for(preset.win_mass), fits]
+	)
+	# [b]And splitting is the way through, which is the mode.[/b] Half the mass is
+	# 1/sqrt(2) of the radius, so a monster up to twice the gate limit can halve itself and
+	# fit — at the cost of the merge delay, in the most dangerous part of the map.
+	_check(
+		rules.radius_for(admits * 1.9 * 0.5) < fits,
+		"and one twice that size fits by splitting",
+		"%.0f mass halves to a radius of %.0f"
+			% [admits * 1.9, rules.radius_for(admits * 1.9 * 0.5)]
+	)
+
+	# --- A rock stops somebody ----------------------------------------------
+
+	world.add_player(1, "Ada")
+
+	var ring: Vector3 = layout.blocks[0]
+	var ring_at := Vector2(ring.x, ring.y)
+	# Outside the ring on the same bearing, driving inward through the rock's middle.
+	var outside := bounds.get_center() + (ring_at - bounds.get_center()) * 1.9
+
+	world.spawn(1, outside)
+	_run_ticks(world, 2)
+
+	var monster := world.monster_for(1)
+
+	if not _check(monster != null and monster.alive, "a monster spawns outside the ring"):
+		_drop(world)
+		_done()
+		return
+
+	var piece_radius := monster.pieces[0].radius()
+
+	# [b]Sampled every tick, not read at the end.[/b] A push-out that let somebody through
+	# for one frame and recovered is indistinguishable from one that never failed if the
+	# only reading is the last one — and one frame inside a rock is one frame of eating
+	# through a wall, which is the whole reason [HungryHazards] resolves before eating too.
+	var deepest := INF
+
+	for _i in range(TICK_RATE * 8):
+		world.tick({1: _aim_at(monster.centre(), bounds.get_center())})
+		deepest = minf(deepest, monster.centre().distance_to(ring_at))
+
+	_check(
+		deepest > ring.z - 2.0,
+		"and driving straight at a rock never puts it inside one, on any tick",
+		"closest approach %.0f to the middle of a %.0f rock" % [deepest, ring.z]
+	)
+
+	# [b]And it gets past anyway, which is the level working rather than failing.[/b] The
+	# first version of this check asserted the monster stayed outside the ring and was
+	# wrong: a starting monster driven at a rock slides along its face, arrives at a gate
+	# and goes through. That is what a ring with gates in it is FOR, and asserting the
+	# opposite would have frozen a level that does not let anybody in.
+	_check(
+		monster.centre().distance_to(bounds.get_center()) < ring_at.length() * 0.5,
+		"but slides round the face of it and in through a gate",
+		"%.0f from the centre, the ring is at %.0f"
+			% [monster.centre().distance_to(bounds.get_center()), ring_at.length()]
+	)
+
+	# --- The same push on the prediction path -------------------------------
+
+	# [b]The one thing a client does for itself.[/b] A client predicts by calling
+	# `simulate_piece` and a reconciliation replays it, so a push-out that only the
+	# authority's loop applied would make every tick spent against a rock a misprediction —
+	# and the correction would ease the player back into the rock they are standing
+	# against. It reads as packet loss, which sends the next person to the netcode.
+	var predicted := _make_world(preset, SEED + 57)
+	predicted.is_authority = false
+	_settle(predicted)
+	predicted.add_player(2, "Bo")
+	predicted.spawn(2, ring_at)
+	_run_ticks(predicted, 1)
+
+	var mirror := predicted.monster_for(2)
+	var mirror_piece := mirror.pieces[0] if mirror != null and not mirror.pieces.is_empty() \
+		else null
+
+	if mirror_piece != null:
+		mirror_piece.state.position = ring_at
+		predicted.simulate_piece(
+			mirror_piece, mirror, _aim_at(ring_at, bounds.get_center()), 1.0 / TICK_RATE, 1
+		)
+
+	_check(
+		mirror_piece != null
+			and mirror_piece.position().distance_to(ring_at) >= ring.z - 1.0,
+		"a client predicting itself is pushed out by the same rocks",
+		"%.0f from the middle of a %.0f rock"
+			% [mirror_piece.position().distance_to(ring_at) if mirror_piece != null else -1.0,
+				ring.z]
+	)
+
+	# A client is TOLD which layout, and builds it. Nothing about the rocks travels.
+	predicted.adopt_layout(HungryLayout.WARRENS)
+	_check(
+		predicted.layout.count() == layout.count()
+			and predicted.layout.narrowest_gap() == layout.narrowest_gap(),
+		"and builds the same twelve from one name in the hello"
+	)
+
+	_drop(predicted)
+
+	# --- A small monster gets through, a big one does not -------------------
+
+	# The gate between the first two ring rocks, on the bearing halfway between them.
+	var second: Vector3 = layout.blocks[1]
+	var gate := (ring_at + Vector2(second.x, second.y)) * 0.5
+	var approach := bounds.get_center() + (gate - bounds.get_center()) * 1.75
+
+	world.spawn(1, approach)
+	_run_ticks(world, 2)
+
+	for _i in range(TICK_RATE * 14):
+		world.tick({1: _aim_at(monster.centre(), bounds.get_center())})
+
+	var small_reach := monster.centre().distance_to(bounds.get_center())
+
+	_check(
+		small_reach < Vector2(ring_at - bounds.get_center()).length() * 0.8,
+		"a starting monster fits through a gate and reaches the middle",
+		"%.0f from the centre, the ring is at %.0f"
+			% [small_reach, Vector2(ring_at - bounds.get_center()).length()]
+	)
+
+	# The same journey at the winning mass. Nothing else changes — same seed, same gate,
+	# same commands — so the only thing that can make the second run end somewhere else is
+	# the radius.
+	world.spawn(1, approach)
+	_run_ticks(world, 2)
+	world.feed_player(1, preset.win_mass - monster.mass())
+	_run_ticks(world, 2)
+
+	var grown := monster.pieces[0].radius()
+
+	for _i in range(TICK_RATE * 14):
+		world.tick({1: _aim_at(monster.centre(), bounds.get_center())})
+
+	var big_reach := monster.centre().distance_to(bounds.get_center())
+
+	_check(
+		grown > fits,
+		"a monster at the winning mass is too wide for the gate",
+		"a radius of %.0f against %.0f" % [grown, fits]
+	)
+	_check(
+		big_reach > small_reach + 100.0,
+		"and the same run leaves it outside the ring",
+		"%.0f from the centre, where the small one got to %.0f"
+			% [big_reach, small_reach]
+	)
+
+	# --- Nothing edible is buried -------------------------------------------
+
+	# [b]A crumb inside a rock cannot be eaten and never expires.[/b] It holds its slot
+	# against the field's budget for ever, so a mode with a layout would quietly run at
+	# seven eighths of the food it claims with nothing anywhere saying so.
+	var buried := 0
+
+	for grid_id in world.field.alive_ids():
+		if layout.blocked(world.field.position_of(grid_id), world.field.radius_of(grid_id)):
+			buried += 1
+
+	_check(buried == 0, "nothing edible is standing inside a rock", "%d buried" % buried)
+	_check(
+		world.field.alive_count() > preset.food_target,
+		"and the field still fills to the target it asks for",
+		"%d alive against a food target of %d"
+			% [world.field.alive_count(), preset.food_target]
+	)
+
+	# --- And nobody spawns inside one ---------------------------------------
+
+	var spawned_inside := 0
+
+	for player in range(10, 30):
+		world.add_player(player, "P%d" % player)
+		world.spawn(player)
+
+		var born := world.monster_for(player)
+
+		if born != null and born.alive and layout.blocked(born.centre(), piece_radius):
+			spawned_inside += 1
+
+	_check(
+		spawned_inside == 0,
+		"and twenty spawns all land on floor rather than in a rock",
+		"%d inside" % spawned_inside
 	)
 
 	_drop(world)

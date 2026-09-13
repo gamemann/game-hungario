@@ -41,10 +41,11 @@ const SNAPSHOT_RATE := 20
 ## which counts up from 1.
 const BOT_ID_BASE := 900001
 
-## The three modes this server can switch between.
+## The modes this server can switch between.
 const GAME_CLASSIC := "hungry_classic"
 const GAME_FRENZY := "hungry_frenzy"
 const GAME_GAUNTLET := "hungry_gauntlet"
+const GAME_WARRENS := "hungry_warrens"
 
 var world: HungryWorld = null
 var net: DotNetManager = null
@@ -76,7 +77,7 @@ var combat: HungryCombat = null
 ## Boards and achievements over the numbers this game already counts.
 var progress: HungryProgress = null
 
-## The three modes as maps, the rotation, and the vote over them.
+## The modes as maps, the rotation, and the vote over them.
 var maps: HungryMaps = null
 
 ## Reports this server to its site listing, when an operator has configured one.
@@ -1233,7 +1234,7 @@ func _sync_pack() -> void:
 
 # --- Games -----------------------------------------------------------------
 
-## The three modes, so `changegame` and a vote have something to change to.
+## The modes, so `changegame` and a vote have something to change to.
 ##
 ## Both ship inside the build, so [member DotGameDescriptor.manifest_url] is empty and no
 ## client has to download anything to follow a change. A game whose content lives on a CDN
@@ -1245,6 +1246,7 @@ static func game_descriptors() -> Array[DotGameDescriptor]:
 		[GAME_CLASSIC, "Hungario: Classic", HungryPaths.rebase("res://game/modes/classic.tscn")],
 		[GAME_FRENZY, "Hungario: Frenzy", HungryPaths.rebase("res://game/modes/frenzy.tscn")],
 		[GAME_GAUNTLET, "Hungario: Gauntlet", HungryPaths.rebase("res://game/modes/gauntlet.tscn")],
+		[GAME_WARRENS, "Hungario: Warrens", HungryPaths.rebase("res://game/modes/warrens.tscn")],
 	]:
 		var descriptor := DotGameDescriptor.new()
 		descriptor.game_id = String(row[0])

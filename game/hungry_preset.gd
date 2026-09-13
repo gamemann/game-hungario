@@ -2,6 +2,7 @@
 extends Resource
 
 const HungryContent := preload("hungry_content.gd")
+const HungryLayout := preload("hungry_layout.gd")
 const HungryPreset := preload("hungry_preset.gd")
 
 ## The handful of numbers that make one mode of this game different from another.
@@ -26,6 +27,14 @@ const HungryPreset := preload("hungry_preset.gd")
 @export_range(0, 20000, 50) var food_target: int = HungryContent.FOOD_TARGET
 @export_range(0, 200, 1) var fruit_target: int = HungryContent.FRUIT_TARGET
 @export_range(0, 200, 1) var item_target: int = HungryContent.ITEM_TARGET
+
+## Which solid geometry stands in the world. Empty is an empty box.
+##
+## [b]A name rather than a list of shapes, because it has to survive the wire.[/b] A client
+## is told which layout is playing and builds the discs itself — see [HungryLayout] — so
+## what travels is one short string and not a hundred and forty-four bytes of circles that
+## both ends already know.
+@export var layout: StringName = HungryLayout.NONE
 
 @export_group("Growing")
 
@@ -104,12 +113,72 @@ static func gauntlet() -> HungryPreset:
 	return preset
 
 
+## A square with things in it, and the things are the mode.
+##
+## [b]Every world before this one was an empty box.[/b] Classic and Frenzy differ by a
+## size, Gauntlet by an aspect ratio, and in all three the only thing between two monsters
+## is distance — so being caught is a failure of speed, always, and the leader catches
+## everybody eventually because the leader is not slow enough for it to matter.
+##
+## Warrens puts a ring of rocks around the middle with gates in it. [b]In this game your
+## mass IS your radius[/b], so a gap is not the same obstacle for everybody: the gates are
+## about a third of the winning mass wide, so the good middle of the map is open to the
+## players who are behind and shut to the player who is ahead. That is a catch-up mechanic
+## made out of geometry rather than out of a rule, and it is the first one here that no
+## dial in this file could have produced.
+##
+## The leader is not locked out, and that is the other half. Half the mass is
+## [code]1/sqrt(2)[/code] of the radius, so splitting fits — at the cost of
+## [member merge_delay_sec], in the one part of the map where being in two halves is most
+## dangerous. A pepper does the same thing to somebody else, against their will, which
+## makes a throwable a way through a wall as well as a way into a fight.
+static func warrens() -> HungryPreset:
+	var preset := HungryPreset.new()
+	preset.id = &"warrens"
+	preset.display_name = "Warrens"
+	preset.layout = HungryLayout.WARRENS
+
+	# Between Classic and Frenzy. Small enough that the ring is most of the map rather
+	# than an ornament in the middle of it, and big enough that the perimeter lane is a
+	# route rather than a corridor.
+	preset.world_size = Vector2(4200.0, 4200.0)
+
+	# [b]Classic's food density over the floor that is actually left.[/b] The layout
+	# covers about an eighth of the rectangle and the field is scattered over the whole of
+	# it, so a target set against the rectangle would be an eighth of a mode's food buried
+	# inside rocks. The world culls what lands in one — see `HungryWorld._cull_blocked` —
+	# and this number is what is left standing.
+	preset.food_target = 620
+
+	# [b]Above Classic's density, unlike the food, and that is the mode rather than an
+	# oversight.[/b] Warrens is full of people you cannot reach; a throwable is how you
+	# deal with one, and a pepper that bursts somebody into halves small enough to fit
+	# through a gate is both an attack and a door.
+	preset.fruit_target = 14
+	preset.item_target = 26
+
+	# Reached through gates rather than across open ground, so it takes about as long as
+	# Frenzy's despite the arena being twice the size.
+	preset.win_mass = 1600.0
+	preset.max_speed = 460.0
+
+	# [b]The gate tax.[/b] Splitting to fit through the middle is the mode's signature
+	# move, and the delay is what stops it being free: four seconds would make the ring
+	# irrelevant and sixteen would make the middle unreachable for anybody who had grown
+	# at all.
+	preset.merge_delay_sec = 8.0
+	preset.time_limit_sec = 360.0
+	return preset
+
+
 static func for_id(preset_id: StringName) -> HungryPreset:
 	match preset_id:
 		&"frenzy":
 			return frenzy()
 		&"gauntlet":
 			return gauntlet()
+		&"warrens":
+			return warrens()
 		_:
 			return classic()
 
@@ -141,6 +210,7 @@ func describe() -> Dictionary:
 		"win": win_mass,
 		"speed": max_speed,
 		"merge": merge_delay_sec,
+		"layout": String(layout),
 	}
 
 

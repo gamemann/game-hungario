@@ -964,7 +964,8 @@ func _send_hello(peer_id: int, player_id: int) -> void:
 			peer_id,
 			net.clock.tick,
 			world.world_size,
-			avatar_pack_url
+			avatar_pack_url,
+			world.layout.id if world.layout != null else &""
 		)
 	)
 
@@ -1264,6 +1265,9 @@ func _apply_hello(reader: DotNetReader) -> void:
 	# Size before seed. The field is hashed into the arena rectangle, so a seed adopted
 	# against the wrong one lays every crumb out somewhere else.
 	world.adopt_world_size(hello["world_size"])
+	# After the size, because the discs are laid out proportionally inside the arena
+	# rectangle — the same ordering rule the seed above obeys, and for the same reason.
+	world.adopt_layout(StringName(String(hello["layout"])))
 	world.adopt_field_seed(int(hello["seed"]))
 
 	hello_received.emit(local_player_id)

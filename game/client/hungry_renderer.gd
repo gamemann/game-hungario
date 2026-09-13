@@ -76,6 +76,12 @@ var void_colour := Color(0.020, 0.023, 0.042)
 var grid_line := Color(0.17, 0.28, 0.46, 0.30)
 var wall := Color(0.36, 0.68, 1.0)
 
+## The level's own geometry. Lit from the same direction as the wall and opaque, because
+## the one thing it has to say is "you cannot be here" — a translucent rock reads as an
+## area effect, and the first thing a player does with an area effect is drive into it.
+var rock := Color(0.21, 0.24, 0.33)
+var rock_rim := Color(0.44, 0.53, 0.70)
+
 ## Food, by tier. Cool and dim through to hot and bright, so size reads at a glance — the
 ## same ordering as before, moved onto a palette that belongs in a sky.
 var food_colours: Array[Color] = [
@@ -114,7 +120,21 @@ func _view() -> Rect2:
 	if camera == null:
 		return world.arena.bounds if world != null else Rect2()
 
-	var half := get_viewport_rect().size * 0.5 * camera.zoom
+	# [b]Divided by the zoom, not multiplied by it.[/b] Godot's [member Camera2D.zoom] is
+	# a magnification: a zoom of 2 doubles the size of everything on screen and therefore
+	# covers HALF the world. This multiplied, which is wrong by the square of the zoom in
+	# area — and the zoom here only leaves 1.0 when the player has grown, so the bug was
+	# invisible for the first minute of every round and then took most of the screen: a
+	# monster at half the winning mass zooms to 0.6, sees 2100 units across and had
+	# everything past 400 of them culled. Nothing drawn past that point, on a black
+	# background, reads as an empty arena rather than as a rendering fault.
+	#
+	# Found by rendering a frame of a level and looking at it. dot-2d's own camera rig had
+	# the same inversion in `visible_rect` and `_clamp`, which is what interest management
+	# is measured against.
+	var half := get_viewport_rect().size * 0.5 / Vector2(
+		maxf(absf(camera.zoom.x), 0.001), maxf(absf(camera.zoom.y), 0.001)
+	)
 	var rect := Rect2(camera.global_position - half, half * 2.0)
 	return rect.grow(CULL_MARGIN)
 
@@ -126,6 +146,12 @@ func _draw() -> void:
 	var view := _view()
 
 	_draw_ground(view)
+	# The level's geometry under the food, over the ground. Before the field for the same
+	# reason the hazards are: a rock that covered a crumb would be a crumb nobody goes
+	# for — except that here nothing is ever under one, because the world culls the field
+	# out of its own geometry. Drawn first anyway, so the day that stops being true the
+	# arena does not quietly develop dead zones.
+	_draw_layout(view)
 	_draw_field(view)
 	# Hazards under everything that moves and over the ground: a rock is part of the arena
 	# and a monster walks in front of it. Drawn before the food as well, so a rock never
@@ -135,6 +161,32 @@ func _draw() -> void:
 	_draw_hunters(view)
 	_draw_projectiles()
 	_draw_monsters(view)
+
+
+## The level. Read from the same [HungryLayout] the client predicts itself against, which
+## is the same one the server resolves against — because both built it from one id.
+##
+## [b]Opaque, hard-edged and the same colour as the wall.[/b] Everything else in this game
+## is a circle too, so the only thing that distinguishes the one circle a player cannot
+## enter is how solid it looks: a rim in the wall's own colour says "this is the edge of
+## the arena, locally", which is exactly what it is.
+func _draw_layout(view: Rect2) -> void:
+	if world == null or world.layout == null:
+		return
+
+	for block in world.layout.blocks:
+		var at := Vector2(block.x, block.y)
+		var radius: float = block.z
+
+		if not view.grow(radius).has_point(at):
+			continue
+
+		draw_circle(at, radius, rock)
+		# Two arcs rather than one: the outer is the boundary a player is stopped at and
+		# the inner is depth. Without the second a rock is a flat hole in the floor, which
+		# at this scale reads as a gap to drive into rather than a thing to go around.
+		draw_arc(at, radius, 0.0, TAU, 48, rock_rim, 3.0)
+		draw_arc(at, radius * 0.82, 0.0, TAU, 40, Color(rock_rim, 0.22), 2.0)
 
 
 ## What people have had put in the arena. Read from the same object the simulation

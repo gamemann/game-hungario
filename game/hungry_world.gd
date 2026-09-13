@@ -3,6 +3,7 @@ extends Node
 
 const HungryContent := preload("hungry_content.gd")
 const HungryField := preload("hungry_field.gd")
+const HungryLayout := preload("hungry_layout.gd")
 const HungryMonster := preload("hungry_monster.gd")
 const HungryNetCommand := preload("net/hungry_net_command.gd")
 const HungryPiece := preload("hungry_piece.gd")
@@ -94,6 +95,16 @@ signal field_changed()
 @export var service_scope: StringName = &""
 
 var arena: Dot2DArena = null
+
+## What is solid in this world: the level's own geometry.
+##
+## [b]Derived on both ends and never replicated.[/b] The authority builds it from the
+## preset and a client builds the same discs from the layout id in the hello, exactly the
+## way both ends build the food field from a seed. See [HungryLayout], and see
+## [HungryHazards] for the other kind of obstacle — the one that IS replicated, because a
+## hazard is placed at runtime and a layout is the map.
+var layout: HungryLayout = HungryLayout.none()
+
 var field: HungryField = null
 var match_node: DotMatch = null
 var tunables: Dot2DTunables = null
@@ -198,11 +209,14 @@ func setup() -> DotResult:
 	# its eat radius in different places.
 	_scaled.mass_rules = tunables.mass_rules
 
+	# Before the field, because the field is culled against it.
+	layout = HungryLayout.for_id(preset.layout, arena.bounds)
+
 	field = HungryField.over(arena.bounds, world_seed)
 	field.food.target_count = preset.food_target
 	field.fruit.target_count = preset.fruit_target
 	field.items.target_count = preset.item_target
-	field.fill_all()
+	_cull_blocked(field.fill_all())
 	field.populate(arena.grid)
 
 	var match_result := _build_match()
@@ -368,7 +382,7 @@ func reset_world() -> void:
 	# A fresh seed per round, so a server that has been up all night is not laying the
 	# same field out for the hundredth time and the regulars have not learnt it.
 	field.reseed(world_seed + match_node.round_number)
-	field.fill_all()
+	_cull_blocked(field.fill_all())
 	field.populate(arena.grid)
 	field_changed.emit()
 
@@ -391,6 +405,20 @@ func adopt_world_size(size: Vector2) -> void:
 	field.set_bounds(arena.bounds)
 
 	DotLog.debug(CHANNEL, "adopted the authority's world size", {"size": size})
+
+
+## Adopts the authority's layout. Client side, from the hello.
+##
+## [b]After the world size and it has to be[/b], for the same reason the field seed does:
+## the discs are laid out proportionally inside the arena rectangle, so a layout built
+## against the wrong rectangle is the right level at the wrong scale — and a client would
+## then be predicting itself around rocks the server does not have.
+func adopt_layout(layout_id: StringName) -> void:
+	layout = HungryLayout.for_id(layout_id, arena.bounds)
+
+	DotLog.debug(CHANNEL, "adopted the authority's layout", {
+		"layout": String(layout_id), "blocks": layout.count(),
+	})
 
 
 ## Adopts the authority's field seed and empties the field. Client side.
@@ -571,7 +599,7 @@ func _safe_spawn(id: int) -> Vector2:
 
 		if chosen.ok:
 			var at3 := (chosen.value as DotSpawnChoice).transform.origin
-			return Vector2(at3.x, at3.y)
+			return _clear_of_layout(Vector2(at3.x, at3.y))
 
 	var start_radius := tunables.mass_rules.radius_for(HungryContent.START_MASS)
 
@@ -591,11 +619,28 @@ func _safe_spawn(id: int) -> Vector2:
 				break
 
 		if not dangerous:
-			return candidate
+			return _clear_of_layout(candidate)
 
 	# Every candidate was dangerous, which on a very full server is possible. Spawning
 	# somewhere bad beats not spawning: the alternative is a player who watches.
-	return arena.spawn_position(id, 240.0)
+	return _clear_of_layout(arena.spawn_position(id, 240.0))
+
+
+## Moves a spawn out of the level's geometry, if it landed in it.
+##
+## [b]Moved rather than rejected, and that is deliberate.[/b] Every producer of a spawn
+## point here — the director's site grid, the arena's deterministic candidates, the
+## fallback — knows about monsters and nothing about rocks, and a rock covers an eighth of
+## a warren. Rejecting would mean an eighth of the candidates silently failing and a player
+## eventually spawning at the fallback, which is the one position the whole function exists
+## to avoid. Pushing out lands them exactly where a piece pushed out of the same rock would
+## be, which is somewhere a player can play from.
+func _clear_of_layout(at: Vector2) -> Vector2:
+	if layout == null or layout.is_empty():
+		return at
+
+	var start_radius := tunables.mass_rules.radius_for(HungryContent.START_MASS)
+	return layout.nearest_clear(at, start_radius, arena.bounds)
 
 
 # --- Pieces ----------------------------------------------------------------
@@ -823,6 +868,29 @@ func simulate_piece(
 		tick_value
 	)
 	motor.tunables = tunables
+	block_piece(piece)
+
+
+## Pushes one piece out of the level's geometry. Immediately after the motor, both ends.
+##
+## [b]Immediately after the motor and not at the end of the tick, because this is on the
+## prediction path.[/b] A client predicts one piece by calling [method simulate_piece] and
+## a reconciliation replays the same call, so whatever the authority does to a piece
+## between its motor step and the state it sends back has to happen inside that call too —
+## otherwise every tick spent against a rock is a misprediction, the correction eases the
+## player back into the rock, and the mode reads as packet loss.
+##
+## It is a pure function of (state, static geometry), which is the shape a replay
+## converges for. [method _separate] is the one thing here that is not, and it is applied
+## live and not replayed for exactly that reason — see [method separate_local]. The
+## consequence is bounded and worth writing down: for the second or so after a split,
+## separation can push a piece a fraction of an overlap back into a rock, and the next
+## tick's block pushes it out again.
+func block_piece(piece: HungryPiece) -> bool:
+	if piece == null or layout == null or layout.is_empty():
+		return false
+
+	return layout.resolve_circle(piece.state, piece.radius())
 
 
 ## Pushes one monster's own pieces apart. Client side, once per tick after predicting.
@@ -951,6 +1019,7 @@ func _simulate_monsters(commands: Dictionary, delta: float) -> void:
 			motor.simulate(
 				piece.state, command_for_piece(command, piece, pointer), delta, _tick
 			)
+			block_piece(piece)
 
 		_separate(monster, delta)
 
@@ -1588,8 +1657,37 @@ func _land(shot: HungryProjectile, at: Vector2, hit_player: int) -> void:
 
 # --- Housekeeping ----------------------------------------------------------
 
+## Takes back every slot that landed inside the level's own geometry.
+##
+## [b]The field is scattered over the rectangle and the rectangle is not all floor.[/b]
+## A crumb inside a rock cannot be eaten — a piece is pushed out to its own radius plus the
+## rock's, so it never reaches the middle — and an uneatable crumb is worse than a missing
+## one: it holds its slot against the field's budget for ever, so a mode with a layout
+## would quietly run at seven eighths of the food it says it has, with nothing anywhere
+## saying so.
+##
+## [b]It costs nothing on the wire.[/b] [method HungryField.take] notes a removal, and
+## [HungryField]'s delta already cancels an id added and taken between two snapshots, so a
+## slot culled on the tick it was placed is never mentioned to anybody.
+##
+## Authority only: a client is told what is alive and derives no membership of its own.
+func _cull_blocked(ids: Array[int]) -> Array[int]:
+	if layout == null or layout.is_empty() or not is_authority:
+		return ids
+
+	var kept: Array[int] = []
+
+	for grid_id in ids:
+		if layout.blocked(field.position_of(grid_id), field.radius_of(grid_id)):
+			field.take(grid_id)
+		else:
+			kept.append(grid_id)
+
+	return kept
+
+
 func _refill_field() -> void:
-	var placed := field.refill()
+	var placed := _cull_blocked(field.refill())
 
 	for grid_id in placed:
 		arena.grid.place(grid_id, field.position_of(grid_id), field.radius_of(grid_id))
@@ -1731,6 +1829,7 @@ func describe() -> Dictionary:
 		"pieces": _pieces.size(),
 		"shots": _shots.size(),
 		"field": field.describe() if field != null else {},
+		"layout": layout.describe() if layout != null else {},
 		"arena": arena.describe() if arena != null else {},
 		"match": match_node.describe() if match_node != null else {},
 	}

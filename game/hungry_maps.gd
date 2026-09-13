@@ -4,7 +4,7 @@ const HungryModule := preload("hungry_module.gd")
 
 ## What plays next, and who decides.
 ##
-## [b]The three modes are the maps.[/b] `classic`, `frenzy` and `gauntlet` are already
+## [b]The modes are the maps.[/b] `classic`, `frenzy`, `gauntlet` and `warrens` are already
 ## `DotGameDescriptor`s that dot-server switches between with `changegame`; dot-map's
 ## catalogue says what they *are* — a kind, a player range, a description a ballot can show
 ## — and its rotation says which one comes round next with a cooldown so the same one does
@@ -50,7 +50,7 @@ var is_admin_fn: Callable = Callable()
 
 # --- The catalogue ---------------------------------------------------------
 
-## The three modes, as maps.
+## The modes, as maps.
 ##
 ## [b]`min_players` is the field that matters and it is the one a ballot uses.[/b]
 ## `gauntlet` is a corridor: two people in it is a chase and eight is a scrum, so it is off
@@ -132,7 +132,8 @@ static func vote_rules() -> DotVoteRules:
 	rules.vote_lead_sec = 90.0
 	rules.vote_cooldown_sec = 60.0
 	rules.vote_duration_sec = 25.0
-	# Three modes, so a ballot of six would be a ballot of three and three blanks.
+	# Four modes with `include_current` off, so three others and an extend is exactly a
+	# full ballot. A ballot of six would be a ballot of four and two blanks.
 	rules.max_options = 4
 	rules.include_extend = true
 	rules.include_current = false
@@ -158,7 +159,7 @@ static func vote_rules() -> DotVoteRules:
 	# [b]On, and it is the setting that makes `MOST_NOMINATED` mean anything.[/b] dot-vote
 	# refused a second player nominating what somebody had already nominated, so every
 	# count was exactly 1 and there was nothing to sort by. It is allowed now and is
-	# itself a setting; with three modes it is also the only way a ballot can show which
+	# itself a setting; with four modes it is also the only way a ballot can show which
 	# one people actually want.
 	rules.nomination_seconding = true
 	rules.cooldown = 1
@@ -176,7 +177,7 @@ func setup(p_games: Object) -> DotResult:
 	catalogue = map_catalogue()
 	rotation = DotMapRotation.of(catalogue)
 	rotation.mode = DotMapRotation.Mode.SEQUENTIAL
-	# One play of cooldown over three maps: enough that the same mode never plays twice in
+	# One play of cooldown over four maps: enough that the same mode never plays twice in
 	# a row, and not so much that a two-mode server runs out of things to pick.
 	rotation.cooldown = 1
 
