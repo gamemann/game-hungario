@@ -638,13 +638,13 @@ done
 godot --headless --path . res://examples/headless_round.tscn   # 228 — the game
 godot --headless --path . res://examples/headless_stack.tscn   #  24 checks
 godot --headless --path . res://examples/headless_net.tscn     # 126 — the netcode
-godot --headless --path . res://examples/dedicated.tscn        # 158 — a real DotServer
+godot --headless --path . res://examples/dedicated.tscn        # 160 — a real DotServer
 godot --headless --path . res://examples/sandbox.tscn          #  74 — two real clients
 godot --headless --path . res://examples/content.tscn          #  45 — the cloud path
 godot --headless --path . res://examples/headless_presentation.tscn  # 48 — the client half
 ```
 
-662 checks. Add `-- --verbose` to `dedicated`, `sandbox` or `content` when one fails and
+705 checks across seven suites. Add `-- --verbose` to `dedicated`, `sandbox` or `content` when one fails and
 the reason is in a log line rather than in the assertion.
 
 **Run `headless_round` after any change to dot-2d** and **`headless_net` after any change
@@ -675,7 +675,7 @@ tools/screenshot_menus.sh              # the screens
 
 **Every check this project has over a mode asserts a simulated value**, and a level that is the wrong scale, drawn in the wrong place or not drawn at all passes every one of them. `tools/screenshot_map.sh` renders three framings of a mode because a level is three different claims: the whole arena says the shape reads, a player's own view says the scale does, and the grown view says it still draws once the camera has zoomed out.
 
-**The third one found a bug the first night it existed.** `HungryRenderer._view` and dot-2d's `Dot2DCameraRig` both computed the visible rectangle as the viewport *multiplied* by the zoom. Godot's `Camera2D.zoom` is a magnification — a zoom of 2 covers half the world, not twice it — so both were wrong by the square of the zoom in area, and the zoom here only leaves 1.0 once the player has grown. A monster at half the winning mass sees 2100 units across and had everything past 400 of them culled: most of the screen simply stopped being drawn, on a black background, which reads as an empty arena rather than as a rendering fault. 705 checks across six suites passed before and after.
+**The third one found a bug the first night it existed.** `HungryRenderer._view` and dot-2d's `Dot2DCameraRig` both computed the visible rectangle as the viewport *multiplied* by the zoom. Godot's `Camera2D.zoom` is a magnification — a zoom of 2 covers half the world, not twice it — so both were wrong by the square of the zoom in area, and the zoom here only leaves 1.0 once the player has grown. A monster at half the winning mass sees 2100 units across and had everything past 400 of them culled: most of the screen simply stopped being drawn, on a black background, which reads as an empty arena rather than as a rendering fault. 705 checks across seven suites passed before and after.
 
 ## Playing it
 
