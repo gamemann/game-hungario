@@ -94,7 +94,7 @@ var settings: HungryConfig = null
 ## The connection, when there is one.
 var link: Node = null
 
-var _pause: HungryMenus.PauseScreen = null
+var _pause: DotPauseScreen = null
 var _offline: bool = false
 var _tick: int = 0
 var _board_accum: float = 0.0
@@ -373,9 +373,16 @@ func _build_ui() -> void:
 	sampler.touch = hud.touch
 
 	_pause = HungryMenus.install(screens, world, bridge, ui_config, settings)
-	_pause.leave_pressed.connect(_on_leave)
 
-	var settings_screen := screens.screen(&"settings") as HungryMenus.SettingsScreen
+	if _pause != null:
+		# Loadout, Settings and Controls are wired inside `install`, because each is only
+		# about the stack. Leaving is this client's decision and is matched by id here.
+		_pause.chosen.connect(func(id: StringName) -> void:
+			if id == HungryMenus.LEAVE:
+				_on_leave()
+		)
+
+	var settings_screen := screens.screen(&"settings") as DotSettingsScreen
 
 	if settings_screen != null:
 		settings_screen.applied.connect(_on_settings_applied)
@@ -758,7 +765,10 @@ func _apply_settings() -> void:
 			hud.feed.max_lines = settings.feed_lines
 
 
-func _on_settings_applied(_config: DotConfig) -> void:
+## [param _changed] is dot-ui's: the keys a settings MANAGER took back. This game hands the
+## screen a bare [HungryConfig], which the panel writes into directly, so the list is empty
+## and the config is already current by the time this runs.
+func _on_settings_applied(_changed: PackedStringArray) -> void:
 	_apply_settings()
 
 	var saved := settings.save()

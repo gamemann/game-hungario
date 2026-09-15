@@ -37,7 +37,7 @@ const HungryWorld := preload("../game/hungry_world.gd")
 const SEED := 20260828
 const TICK_RATE := 60
 
-const CHECKS := 228
+const CHECKS := 233
 
 var _passed := 0
 var _failed := 0
@@ -1978,8 +1978,24 @@ func _test_interface() -> void:
 	# The settings screen has no layout code: DotSettingsPanel reads the config's own
 	# `@export` annotations and builds the editors from them, so a setting added to
 	# HungryConfig appears there and nothing else changes.
-	var settings := stack.screen(&"settings") as HungryMenus.SettingsScreen
+	var settings := stack.screen(&"settings") as DotSettingsScreen
 	_check(settings != null, "the settings screen registers")
+	# dot-ui's screens rather than copies of them. This game carried its own pause menu and
+	# its own settings screen for as long as `DotPauseScreen` and `DotSettingsScreen` have
+	# existed, which is the duplication that addon was written to end.
+	_check(pause is DotPauseScreen, "the pause screen is the shared one")
+	_check(
+		pause.ids() == ([&"resume", &"loadout", &"settings", &"controls", HungryMenus.LEAVE]
+			as Array[StringName]),
+		"and its ids come from its labels (%s)" % [pause.ids()]
+	)
+	# The button id IS the screen id for the three that open one, which is what makes the
+	# match in `install` a lookup rather than a second table.
+	for id in [&"loadout", &"settings", &"controls"]:
+		_check(
+			stack.screen(id) != null,
+			"a button called %s opens a screen registered under that id" % id
+		)
 
 	if settings != null:
 		_check(

@@ -333,14 +333,16 @@ func _build_server(server_side: Node) -> bool:
 	if not _check(loaded.ok, "the classic mode loads", str(loaded.error)):
 		return false
 
-	var platform := _server.modules.load_module(
+	var platform: DotResult = await _server.modules.load_module(
 		"res://addons/dot_platform/dot_platform_module.gd"
 	)
 
 	if not _check(platform.ok, "the platform module loads", str(platform.error)):
 		return false
 
-	var hungry := _server.modules.load_module("res://game/hungry_module.gd")
+	var hungry: DotResult = await _server.modules.load_module(
+		"res://game/hungry_module.gd"
+	)
 	return _check(hungry.ok, "and so does the game", str(hungry.error))
 
 

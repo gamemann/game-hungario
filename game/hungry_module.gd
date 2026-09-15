@@ -173,6 +173,7 @@ func _module_load() -> DotResult:
 
 	_register_games()
 	_register_console()
+	_build_query_provider()
 
 	_build_reporting()
 	_build_stats()
@@ -1630,6 +1631,84 @@ func _target(ctx: DotCmdContext, needle: String) -> HungryMonster:
 		else "That player is not in the world."
 	)
 	return null
+
+
+## What a server browser is told about this game.
+##
+## [b]This game shipped a full server browser and answered no query at all.[/b]
+## `HungryBrowser` is a real dot-browser list — DQP, DQP over a WebSocket, A2S,
+## favourites, history and a mode filter — and a hungario server it was handed the address
+## of could not answer it. The tracker in the middle is still missing and is written down
+## as such; this is the half that was missing at *this* end, which nothing had noticed
+## because the browser's own suite queries a server built by dot-browser.
+##
+## What goes in is what a person filtering a list filters on. The mode is the map here, so
+## `map` is the preset rather than a file: a browser showing "hungry_classic" under Map is
+## showing what a player would call the map, and showing the content id would be showing
+## them dot-server's bookkeeping.
+func _build_query_provider() -> void:
+	var provider := HungryQueryProvider.new()
+	provider.module = self
+
+	# Logged rather than checked: a server with neither query protocol enabled is a
+	# legitimate deployment — a peer-to-peer session has no listener to answer on — and
+	# refusing to load the game over it would take the game down for a listing.
+	DotLog.result(CHANNEL, "the query provider", add_query_provider(provider), DotLog.Level.DEBUG)
+
+
+## A [DotQueryProvider] over this module. An inner class for game-arena's reason: it is
+## one method and a reference, and a file for it would be a file about nothing else.
+class HungryQueryProvider extends DotQueryProvider:
+	## The module, held as an [Object] because this script has no [code]class_name[/code]
+	## and an inner class cannot name the outer script it lives in. Every read off it is
+	## typed on arrival instead.
+	var module: Object = null
+
+	func _provider_name() -> String:
+		return "hungry"
+
+	func _contribute(snapshot: DotQuerySnapshot) -> void:
+		if module == null or module.world == null:
+			return
+
+		# Typed explicitly rather than inferred: this is an inner class of the script it
+		# is reading, so the outer type is not yet resolved while this one is compiled and
+		# `:=` cannot infer anything off it.
+		var world: HungryWorld = module.world
+		var preset: Object = world.preset
+		var match_node: DotMatch = world.match_node
+
+		var values := {
+			"mode": String(preset.id) if preset != null else "",
+			"mode_name": preset.display_name if preset != null else "",
+			# The preset IS the map in this game. See above.
+			"map": String(preset.id) if preset != null else "",
+			"players": module._joined.size(),
+			"bots": module._bots.size(),
+			"world_size": "%dx%d" % [
+				int(preset.world_size.x), int(preset.world_size.y)
+			] if preset != null else "",
+			"win_mass": preset.win_mass if preset != null else 0.0,
+			"food": world.field.food_count() if world.field != null else 0,
+			# The two cvars that make this a different game, which is exactly what a
+			# person reading a server list wants to know before they join.
+			"hunters": module.hunters != null and module.hunters.is_enabled(),
+			"hazards": module.hazards != null,
+		}
+
+		if match_node != null:
+			values["state"] = DotMatch.State.keys()[match_node.state]
+			values["round"] = match_node.round_number
+
+		var top: Array[HungryMonster] = world.leaderboard(1)
+
+		if not top.is_empty():
+			# The leader's mass rather than a name: a list filters on how far through a
+			# round is, and a name in a query row is a name in somebody's scraper.
+			values["top_mass"] = int(top[0].mass())
+
+		for key: String in values:
+			snapshot.game[key] = values[key]
 
 
 func describe() -> Dictionary:

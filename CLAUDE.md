@@ -635,16 +635,16 @@ find . -name '*.gd' -not -path './.godot/*' -not -path './addons/*' | while read
     godot --headless --path . --check-only --script "res://${f#./}"
 done
 
-godot --headless --path . res://examples/headless_round.tscn   # 228 — the game
+godot --headless --path . res://examples/headless_round.tscn   # 233 — the game
 godot --headless --path . res://examples/headless_stack.tscn   #  24 checks
 godot --headless --path . res://examples/headless_net.tscn     # 126 — the netcode
-godot --headless --path . res://examples/dedicated.tscn        # 160 — a real DotServer
+godot --headless --path . res://examples/dedicated.tscn        # 167 — a real DotServer
 godot --headless --path . res://examples/sandbox.tscn          #  74 — two real clients
 godot --headless --path . res://examples/content.tscn          #  45 — the cloud path
 godot --headless --path . res://examples/headless_presentation.tscn  # 48 — the client half
 ```
 
-705 checks across seven suites. Add `-- --verbose` to `dedicated`, `sandbox` or `content` when one fails and
+717 checks across seven suites. Add `-- --verbose` to `dedicated`, `sandbox` or `content` when one fails and
 the reason is in a log line rather than in the assertion.
 
 **Run `headless_round` after any change to dot-2d** and **`headless_net` after any change
@@ -786,9 +786,17 @@ unlocks dot-achievements, and a peer-to-peer host can lie about how much they at
 who can cheat and a persistent number are one exploit rather than two features, and
 `reporting_allowed()` is the one place that is asked.
 
+## Two of the five screens are dot-ui's now, and both had been copies
+
+dot-ui grew `DotPauseScreen` and `DotSettingsScreen` because four clients here had independently written the same shapes — a centred `PanelContainer`, a heading, a column of `Button`s, a focus path; and a panel, a title and Apply / Revert / Back. **Three of the four never moved onto them, and this game was one of the three.** What is this game's own is `HungryMenus.PAUSE_BUTTONS` and what happens when a button is pressed; the ids are derived from the labels, and for the three that open a screen **the button id IS the screen id**, so the match in `install` is a lookup rather than a second table of which button opens what.
+
+The settings screen brought something the copy did not have: a `ScrollContainer`. A `DotSettingsPanel` is as tall as the document it was handed, and a document is as long as somebody's `@export` list — without one the column grows past the bottom of the window and takes Apply, Revert and Back with it, which every structural assertion passes through happily and only a picture shows. It is in `screenshot_menus.sh` now for exactly that reason; it was not before.
+
+`ControlsScreen`, `ScoreboardScreen` and `LoadoutScreen` stay this game's own, because each is about something dot-ui has no opinion about: a key map, a match's scoreboard, and a loadout schema.
+
 ## The menus, rendered and looked at
 
-`tools/screenshot_menus.sh` renders the pause menu, the loadout picker, the scoreboard and the rebinder. This game has the most screens of any in the family and had no screenshot tool at all.
+`tools/screenshot_menus.sh` renders the pause menu, the loadout picker, the scoreboard, the rebinder and the settings screen. This game has the most screens of any in the family and had no screenshot tool at all.
 
 What it found was in dot-ui rather than here, and it applied to this game's browser and HUD leaderboard as well as its scoreboard: **a column declared with no `width` collapsed to nothing**, so the mass, the pieces, the rank and the ping had never been drawn — one column, with the data correct and `describe()` agreeing. And underneath that, **`DotTableView` honoured no width at all**: it used a `GridContainer`, which gives every column the same width whatever ratio a cell asks for, so the `3.0` on the Monster column was inert and long names were clipped in a table with empty space in it.
 
@@ -846,3 +854,13 @@ What a player loses is the Enter key, and it is one setting away.
   WebSocket, A2S, favourites, history and a mode filter — and the half still missing is in
   the middle: a tracker has to be *told* an address, and nothing announces one.
   `DotBrowserSourceBackbone` reads a listing website-city does not publish yet.
+
+  **The other half was missing at this end and is not any more.** This game shipped that
+  browser against a server that answered nothing: `config.query_enabled` was never set,
+  no `DotQueryHost` was ever attached, and `HungryModule` contributed no query provider —
+  so a hungario server somebody typed the address of straight into the box could not be
+  asked what it was running. dot-browser's own suite queries a server dot-browser built,
+  which is why neither side had noticed. `HungryQueryProvider` is the game's half of it,
+  and what goes in is what a person filtering a list filters on: the mode (which is the
+  map here), the occupancy, the round state, the leader's mass, and **whether hunters and
+  hazards are on** — the two cvars that make this a different game.

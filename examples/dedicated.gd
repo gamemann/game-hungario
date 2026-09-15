@@ -30,6 +30,12 @@ const HungryWorld := preload("../game/hungry_world.gd")
 const PORT := 27081
 const SERVER_DIR := "user://hungry_dedicated"
 
+## The app's URL segment on the website, which is this game's code name.
+##
+## Unique and lowercase because the site already made it so. Display only — a listing
+## prints it to say which game this is, and nothing treats it as proof.
+const APP_URL := "hungario"
+
 var _passed := 0
 var _failed := 0
 var _failures := PackedStringArray()
@@ -86,6 +92,7 @@ func _run() -> void:
 		_test_hunters()
 		_test_hazards()
 		await _test_progress()
+		_test_query()
 		_test_vote()
 		await _test_game_change()
 		_test_transport()
@@ -122,6 +129,48 @@ var _completed := 0
 
 
 ## Opens a section. Pair with [method _done] on every path out of it.
+## The server half of this game's own server browser.
+##
+## [b]`HungryBrowser` has existed for as long as this client has, and until now nothing in
+## this repository could answer it.[/b] dot-browser's own suite queries a server dot-browser
+## built; this is the first time a real `DotServer` running this game is asked, which by
+## this family's repeated lesson is where the bugs are rather than in either half.
+func _test_query() -> void:
+	_section("the server browser's half")
+
+	var module := _module()
+
+	if module == null:
+		_done()
+		return
+
+	_check(_server.query_source != null, "the server has a query source to contribute to")
+
+	var snapshot := DotQuerySnapshot.new()
+
+	for provider in module._query_providers:
+		provider.call("_contribute", snapshot)
+
+	_check(snapshot.game.has("mode"), "the query says which mode is being played")
+	_check(snapshot.game.has("map"), "and what a player would call the map")
+	_check(snapshot.game.has("state"), "and how far through the round it is")
+	_check(
+		String(snapshot.game.get("mode", "")) == String(_world().preset.id),
+		"and the mode it names is the one that is running",
+		str(snapshot.game.get("mode", ""))
+	)
+	# The two cvars that make this a different server. A list that cannot show them sends
+	# somebody into a game about being hunted when they wanted a game about eating.
+	_check(snapshot.game.has("hunters"), "and whether hunters are on")
+	_check(
+		int(snapshot.game.get("players", -1)) == module._joined.size(),
+		"the player count is the module's own rather than a second tally",
+		str(snapshot.game.get("players", -1))
+	)
+
+	_done()
+
+
 func _section(title: String) -> void:
 	_entered += 1
 	print("")
@@ -188,6 +237,12 @@ func _build(serving: bool) -> bool:
 	# correct layering and would make this test assert against whatever that file says.
 	config.startup_config = ""
 	config.autoexec_config = ""
+	# The query listeners. On by default on a real server and named here so a suite that
+	# stopped exercising them fails rather than skipping -- which is what this game did for
+	# as long as it has shipped a server browser: `HungryBrowser` asks, and nothing here
+	# had anything listening to answer.
+	config.query_enabled = true
+	config.query_port = PORT + 1
 
 	_server = DotServer.new()
 	_server.name = "Server"
@@ -195,6 +250,14 @@ func _build(serving: bool) -> bool:
 	_server.config_file = ""
 	_server.auto_boot = false
 	add_child(_server)
+
+	# Answering a query is its own addon, and a server only answers if a host is plugged
+	# in. Added before boot() so the listener opens with everything else.
+	var query_host := DotQueryHost.new()
+	query_host.name = "QueryHost"
+	query_host.app_url = APP_URL
+	query_host.server_ref = DotNodeRef.of_path(NodePath("../Server"))
+	add_child(query_host)
 
 	var booted: DotResult = await _server.boot()
 
@@ -214,7 +277,9 @@ func _build(serving: bool) -> bool:
 	if not _check(loaded.ok, "the classic mode loads", str(loaded.error)):
 		return false
 
-	var module := _server.modules.load_module("res://game/hungry_module.gd")
+	var module: DotResult = await _server.modules.load_module(
+		"res://game/hungry_module.gd"
+	)
 	return _check(module.ok, "and the module loads into it", str(module.error))
 
 
@@ -1232,7 +1297,7 @@ func _test_unload() -> void:
 	)
 
 	_check(
-		_server.modules.load_module("res://game/hungry_module.gd").ok,
+		(await _server.modules.load_module("res://game/hungry_module.gd")).ok,
 		"and loads again cleanly"
 	)
 	_done()

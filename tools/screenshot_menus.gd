@@ -1,5 +1,6 @@
 extends SceneTree
 
+const HungryConfig := preload("../game/hungry_config.gd")
 const HungryContent := preload("../game/hungry_content.gd")
 const HungryMenus := preload("../game/client/hungry_menus.gd")
 const HungryWorld := preload("../game/hungry_world.gd")
@@ -51,9 +52,10 @@ func _initialize() -> void:
 
 	var ui_config := DotUiConfig.new()
 
-	var pause := HungryMenus.PauseScreen.new()
+	var pause := DotPauseScreen.new()
 	pause.name = "Pause"
-	pause.build()
+	pause.half_size = Vector2(170.0, 150.0)
+	pause.build(PackedStringArray(HungryMenus.PAUSE_BUTTONS))
 	_stack.register(pause)
 
 	var controls := HungryMenus.ControlsScreen.new()
@@ -81,11 +83,24 @@ func _initialize() -> void:
 	scoreboard.build(world, null)
 	_stack.register(scoreboard)
 
+	# [b]The settings screen was not in this list and is the one that most needed to be.[/b]
+	# It is generated from a document rather than laid out, so the only thing that can be
+	# wrong with it is its SHAPE -- and the shape is exactly what no assertion reaches.
+	# dot-ui's own screenshot found the case: a panel as tall as somebody's `@export` list
+	# grows past the bottom of the window and takes Apply, Revert and Back with it, with
+	# every property correct throughout. This game's own copy of the screen had no
+	# ScrollContainer and was never looked at.
+	var settings := DotSettingsScreen.new()
+	settings.name = "Settings"
+	settings.build(HungryConfig.new())
+	_stack.register(settings)
+
 	_shots = [
 		{"id": &"pause", "file": "menu_pause.png"},
 		{"id": &"loadout", "file": "menu_loadout.png"},
 		{"id": &"scoreboard", "file": "menu_scoreboard.png"},
 		{"id": &"controls", "file": "menu_controls.png"},
+		{"id": &"settings", "file": "menu_settings.png"},
 	]
 
 

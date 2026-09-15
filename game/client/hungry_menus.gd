@@ -19,131 +19,21 @@ const HungryWorld := preload("../hungry_world.gd")
 
 const CHANNEL := "hungry.menus"
 
-
-## The pause menu. Opaque, so the HUD goes away behind it.
-class PauseScreen extends DotScreen:
-	signal resume_pressed()
-	signal loadout_pressed()
-	signal settings_pressed()
-	signal controls_pressed()
-	signal leave_pressed()
-
-	func _screen_id() -> StringName:
-		return &"pause"
-
-	func build() -> void:
-		hides_below = true
-		blocks_input = true
-		mouse_mode = DotScreen.Mouse.VISIBLE
-
-		var panel := PanelContainer.new()
-		panel.name = "Panel"
-		panel.set_anchors_preset(Control.PRESET_CENTER)
-		panel.offset_left = -170.0
-		panel.offset_right = 170.0
-		panel.offset_top = -150.0
-		panel.offset_bottom = 150.0
-		add_child(panel)
-
-		var column := VBoxContainer.new()
-		column.name = "Column"
-		panel.add_child(column)
-
-		var title := Label.new()
-		title.text = "Paused"
-		title.theme_type_variation = &"DotHeading"
-		title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		column.add_child(title)
-
-		_add_button(column, "Resume", func() -> void: resume_pressed.emit())
-		_add_button(column, "Loadout", func() -> void: loadout_pressed.emit())
-		_add_button(column, "Settings", func() -> void: settings_pressed.emit())
-		_add_button(column, "Controls", func() -> void: controls_pressed.emit())
-		_add_button(column, "Leave", func() -> void: leave_pressed.emit())
-
-		# Without this the menu opens with nothing focused: unusable with a gamepad, and
-		# invisible to anybody testing with a mouse.
-		#
-		# A path by name, not `button.get_path()`: this runs before the screen is
-		# registered with a stack, so it is not in the tree yet and `get_path()` pushes an
-		# error and returns nothing. game-arena's pause menu shipped with exactly that.
-		initial_focus = NodePath("Panel/Column/Resume")
-
-	func _add_button(into: Control, text: String, action: Callable) -> Button:
-		var button := Button.new()
-		button.name = text
-		button.text = text
-		button.pressed.connect(action)
-		into.add_child(button)
-		return button
-
-
-## Settings, generated from a [DotConfig].
+## What is on the pause menu, top to bottom.
 ##
-## The panel reads the config's own `@export` annotations, so this screen never restates a
-## setting and cannot drift from one.
-class SettingsScreen extends DotScreen:
-	signal applied(config: DotConfig)
+## A list of LABELS and no list of ids beside it: [DotPauseScreen] derives the id from the
+## label, because two parallel lists are the shape this tree has paid for more than any
+## other. `"Loadout"` is `&"loadout"`, which is also the id its screen registers under, so
+## the push below is the label and not a second spelling of it.
+##
+## (`const` rather than a `PackedStringArray(...)` call, which is not a constant expression
+## in GDScript. It is converted at the one place it is handed over.)
+const PAUSE_BUTTONS: Array[String] = [
+	"Resume", "Loadout", "Settings", "Controls", "Leave",
+]
 
-	var panel: DotSettingsPanel = null
-
-	func _screen_id() -> StringName:
-		return &"settings"
-
-	func build(config: DotConfig) -> void:
-		blocks_input = true
-
-		var container := PanelContainer.new()
-		container.set_anchors_preset(Control.PRESET_CENTER)
-		container.offset_left = -290.0
-		container.offset_right = 290.0
-		container.offset_top = -230.0
-		container.offset_bottom = 230.0
-		add_child(container)
-
-		var column := VBoxContainer.new()
-		container.add_child(column)
-
-		var title := Label.new()
-		title.text = "Settings"
-		title.theme_type_variation = &"DotHeading"
-		column.add_child(title)
-
-		panel = DotSettingsPanel.new()
-		# Edits are held until Apply. A live panel would call validate() on a half-edited
-		# config, which can legitimately be invalid on its way to being valid.
-		panel.live = false
-		column.add_child(panel)
-		panel.bind(config)
-
-		var buttons := HBoxContainer.new()
-		column.add_child(buttons)
-
-		var apply := Button.new()
-		apply.text = "Apply"
-		apply.pressed.connect(func() -> void:
-			var res := panel.apply()
-
-			if not res.ok:
-				DotLog.result(CHANNEL, "settings", res)
-				return
-
-			# Applied and then announced, so a listener never reads a config that failed
-			# validation — which is a legitimate state on the way to a valid one, and the
-			# reason the panel holds edits until Apply rather than writing them live.
-			applied.emit(panel.bound_config())
-		)
-		buttons.add_child(apply)
-
-		var revert := Button.new()
-		revert.text = "Revert"
-		revert.pressed.connect(panel.revert)
-		buttons.add_child(revert)
-
-		var back := Button.new()
-		back.text = "Back"
-		back.pressed.connect(close)
-		buttons.add_child(back)
+## The id of the button this game's client acts on itself. See [method install].
+const LEAVE := &"leave"
 
 
 ## Key bindings, with conflict detection and a file that survives a restart.
@@ -457,7 +347,7 @@ static func install(
 	bridge: HungryNetBridge,
 	ui_config: DotUiConfig,
 	game_config: DotConfig = null
-) -> PauseScreen:
+) -> DotPauseScreen:
 	var loadout := LoadoutScreen.new()
 	loadout.name = "Loadout"
 	loadout.build(
@@ -466,17 +356,43 @@ static func install(
 	)
 	stack.register(loadout)
 
-	var pause := PauseScreen.new()
+	# [b]dot-ui's pause screen, and it used to be a copy of it.[/b] That addon grew
+	# `DotPauseScreen` precisely because four clients here had written the same forty lines
+	# -- a centred `PanelContainer`, a heading, a column of `Button`s and a focus path --
+	# and this file went on being one of them. What is this game's own is the list of
+	# labels above and what happens when one is pressed.
+	var pause := DotPauseScreen.new()
 	pause.name = "Pause"
-	pause.build()
+	pause.half_size = Vector2(170.0, 150.0)
+
+	var built := pause.build(PackedStringArray(PAUSE_BUTTONS))
+
+	if not built.ok:
+		DotLog.result(CHANNEL, "the pause screen", built)
+		pause.free()
+		return null
+
 	stack.register(pause)
 
-	var settings := SettingsScreen.new()
+	# Likewise dot-ui's, and it brings something this game's copy did not have: a
+	# ScrollContainer. A `DotSettingsPanel` is as tall as the document it was handed, and a
+	# document is as long as somebody's `@export` list -- without one the column grows past
+	# the bottom of the screen and takes Apply, Revert and Back with it, which every
+	# structural assertion passes through happily.
+	var settings := DotSettingsScreen.new()
 	settings.name = "Settings"
-	# The game's own settings when there are any, the interface's otherwise. The panel does
-	# not care which: it reads whatever `@export` annotations the config has.
-	settings.build(game_config if game_config != null else ui_config)
-	stack.register(settings)
+
+	# The game's own settings when there are any, the interface's otherwise. The screen does
+	# not care which: it takes a bare `DotConfig` or anything with `to_config()`.
+	var settings_built := settings.build(
+		game_config if game_config != null else ui_config
+	)
+
+	if settings_built.ok:
+		stack.register(settings)
+	else:
+		DotLog.result(CHANNEL, "the settings screen", settings_built)
+		settings.free()
 
 	var controls := ControlsScreen.new()
 	controls.name = "Controls"
@@ -488,9 +404,19 @@ static func install(
 	scoreboard.build(world, bridge)
 	stack.register(scoreboard)
 
-	pause.resume_pressed.connect(func() -> void: stack.pop(&"pause"))
-	pause.loadout_pressed.connect(func() -> void: stack.push(&"loadout"))
-	pause.settings_pressed.connect(func() -> void: stack.push(&"settings"))
-	pause.controls_pressed.connect(func() -> void: stack.push(&"controls"))
+	# Every button but Leave is about the stack and nothing else, so it is wired here. What
+	# LEAVE means belongs to the client -- an embedded one cannot leave and a
+	# single-process test must not -- so that one is left for the caller.
+	pause.chosen.connect(func(id: StringName) -> void:
+		match id:
+			&"resume":
+				stack.pop(&"pause")
+			&"loadout", &"settings", &"controls":
+				# The button id IS the screen id, which is what the label list buys: a
+				# parallel table of "which button opens which screen" is two lists that
+				# can disagree, and this one cannot.
+				if stack.screen(id) != null:
+					stack.push(id)
+	)
 
 	return pause
