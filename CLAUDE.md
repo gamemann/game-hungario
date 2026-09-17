@@ -521,6 +521,18 @@ than its count.
 
 Nothing was wrong. Twelve checks that would have passed on a square whether or not the code were right now pass on a shape where they mean something.
 
+**And the corridor has things in it now, which is the half that had been missing since the day it was written.** A bare corridor removes two directions from being chased; it does not make getting away from somebody a decision, because along an empty lane the faster monster still arrives. `HungryLayout.SLALOM` puts five rocks down it, alternately near one wall and the other, and the level is the difference between the two lanes each one leaves: the near lane is about a third of the width of the far one, so a monster at a third of the winning mass takes the shortcut and one that has grown takes the long way round every rock. The shortcut changes sides at every rock, so taking it is paid for by the crossing that follows — five rocks with the same offset would be a wall with a corridor beside it.
+
+**The far lane is deliberately open to a monster that has already won**, and the suite asserts it. That is where the corridor and the ring part company: a ring is escapable by construction — the middle is the part you are shut out of — and a corridor is not, so a rock whose wide lane is also too narrow is a cork and the mode ends with the leader parked against it. `widest_way_past` is the check that says the slalom is a level rather than a cage.
+
+#### A gate is a gap between two things, and until the slalom both of them were rocks
+
+`HungryLayout.narrowest_gap` measures rock against rock, and that is the whole question for the warrens because a ring's gates are between two ring rocks. A slalom rock stands off one *wall*: its narrow lane is against that wall and its wide one against the other, and neither is a gap between two rocks at all. **Asked the old question the slalom answers 646 units** — the distance between two rocks a thousand apart, which is not a gate, is not the level, and is not a number anybody would have noticed was wrong.
+
+`narrowest_gate(bounds)` is the question every layout should be asked, and it reduces to the old one where the old one was right: the warrens' corner rocks stand further off the wall than its ring rocks stand from each other, so its answer is unchanged and its section now asks the new one. `HungryLayout.ids()` exists for the same reason — the gate section named `warrens` because `warrens` was the only layout there was, and a check named after one level proves nothing about the next.
+
+**A level also changes the food, and that arrives as a side effect nobody attributes to the level.** The field scatters over the whole rectangle and `_cull_blocked` deletes what lands in a rock, so five slalom rocks over an eighth of the corridor made `gauntlet.food_target == frenzy.food_target` an assertion that the corridor is an eighth hungrier than the square. The target is 790 now and the check compares food per unit of *walkable* floor, through `HungryLayout.covered_area`.
+
 **`warrens` is the first world with anything standing in it, and the mechanic is that mass IS radius.** The other three are empty boxes: the only thing between two monsters is distance, so being caught is a failure of speed and the leader catches everybody eventually. Warrens puts a ring of eight rocks around the middle with 360-unit gates between them, and a gate is a *mass limit* — it admits a radius under 180, which on this curve is about 500 mass against a winning mass of 1600. The good middle of the map is open to the players who are behind and shut to the player who is ahead, which is a catch-up mechanic made out of geometry rather than out of a rule, and no dial in `HungryPreset` could have produced it.
 
 The leader is not locked out, and that is the other half. Half the mass is `1/sqrt(2)` of the radius, so splitting fits — at the cost of `merge_delay_sec`, in the one part of the map where being in two halves is most dangerous. A pepper does the same thing to somebody else against their will, which makes a throwable a way through a wall as well as a way into a fight.
@@ -635,7 +647,7 @@ find . -name '*.gd' -not -path './.godot/*' -not -path './addons/*' | while read
     godot --headless --path . --check-only --script "res://${f#./}"
 done
 
-godot --headless --path . res://examples/headless_round.tscn   # 233 — the game
+godot --headless --path . res://examples/headless_round.tscn   # 246 — the game
 godot --headless --path . res://examples/headless_stack.tscn   #  24 checks
 godot --headless --path . res://examples/headless_net.tscn     # 126 — the netcode
 godot --headless --path . res://examples/dedicated.tscn        # 167 — a real DotServer
@@ -644,7 +656,7 @@ godot --headless --path . res://examples/content.tscn          #  45 — the clo
 godot --headless --path . res://examples/headless_presentation.tscn  # 48 — the client half
 ```
 
-717 checks across seven suites. Add `-- --verbose` to `dedicated`, `sandbox` or `content` when one fails and
+730 checks across seven suites. Add `-- --verbose` to `dedicated`, `sandbox` or `content` when one fails and
 the reason is in a log line rather than in the assertion.
 
 **Run `headless_round` after any change to dot-2d** and **`headless_net` after any change
@@ -670,6 +682,7 @@ must do and the thing nothing in this family had ever checked.
 
 ```bash
 tools/screenshot_map.sh warrens        # the whole arena, a player's view, and a grown one
+tools/screenshot_map.sh gauntlet       # the corridor and its slalom
 tools/screenshot_menus.sh              # the screens
 ```
 

@@ -37,6 +37,22 @@ const NONE := &""
 ## A ring of gates around a middle, with cover in the corners.
 const WARRENS := &"warrens"
 
+## A line of rocks down a corridor, alternately near one wall and the other.
+const SLALOM := &"slalom"
+
+
+## Every layout that is a level, so a check can ask all of them the same question.
+##
+## [b]This list exists because of the failure it prevents rather than because anything
+## needed to enumerate layouts.[/b] `warrens` was the only layout for as long as there was
+## one, so the suite's gate section named it, built it, and asked it whether its gates were
+## the width the design wants. That check is about the gates of whatever level is playing,
+## and written against a name it proves nothing about the second level — which arrived
+## with its gates measured against a WALL rather than against another rock, a case the
+## question as originally asked cannot even see. See [method narrowest_gate].
+static func ids() -> Array[StringName]:
+	return [WARRENS, SLALOM]
+
 
 ## What is solid, as `(x, y, radius)` in world units.
 var blocks: PackedVector3Array = PackedVector3Array()
@@ -58,6 +74,8 @@ static func for_id(layout_id: StringName, bounds: Rect2) -> HungryLayout:
 	match layout_id:
 		WARRENS:
 			return _warrens(bounds)
+		SLALOM:
+			return _slalom(bounds)
 		_:
 			return none()
 
@@ -128,6 +146,80 @@ static func _warrens(bounds: Rect2) -> HungryLayout:
 	return out
 
 
+# --- slalom ----------------------------------------------------------------
+
+## How many rocks the slalom is made of.
+##
+## Odd, so one of them stands on the middle of the corridor and neither end of it is the
+## same as the other. An even count makes the two spawn ends mirror images, and a
+## corridor whose two halves are the same is one half twice.
+const SLALOM_COUNT := 5
+
+## How big one slalom rock is, as a fraction of the corridor's HALF-WIDTH.
+const SLALOM_RADIUS := 0.38
+
+## How far off the corridor's centre line each rock stands, same fraction.
+##
+## [b]The level is the difference between the two lanes this leaves[/b], and both numbers
+## above are chosen for that difference rather than for how a rock looks. A rock at
+## [constant SLALOM_OFFSET] with radius [constant SLALOM_RADIUS] leaves
+## `1 - OFFSET - RADIUS` of half-width on the near side and `1 - RADIUS + OFFSET` on the
+## far side: 0.40 against 0.84, a shortcut a little over a third the width of the way
+## round.
+const SLALOM_OFFSET := 0.22
+
+
+## A line of rocks down a corridor, alternately near one wall and the other.
+##
+## [b]`gauntlet` was a corridor with nothing in it, which is a chase decided by speed with
+## the sideways directions removed.[/b] That is a different game from `classic` and it is
+## still a game with one move in it. The slalom is the corridor's answer to what the
+## warrens does for the square, and it has to be a different shape to be one: a ring has a
+## middle to be shut out of, and a corridor has no middle — everything in it is on the way
+## from one end to the other.
+##
+## So the gate here is not a way IN, it is a way PAST, and there are two of them at every
+## rock. The near lane is about a third of the width of the far one, so a monster that has
+## grown takes the long way round every single rock while the one chasing it cuts the
+## inside line — and over five rocks that is a real distance rather than a flourish. The
+## far lane is wide enough for a monster that has already won, deliberately: a corridor
+## whose gates a leader cannot pass at all is not a catch-up mechanic, it is a cage, and
+## the ring in the warrens is escapable precisely because it is a ring.
+##
+## [b]The rocks alternate sides, which is what makes the inside line a choice rather than
+## a lane.[/b] Taking it at one rock puts you on the wrong side for the next, so the
+## shortcut is paid for by the crossing that follows it. Five rocks with the same offset
+## would be a wall with a corridor beside it.
+static func _slalom(bounds: Rect2) -> HungryLayout:
+	var out := HungryLayout.new()
+	out.id = SLALOM
+
+	# [b]Which way the corridor runs is read from the rectangle, not assumed.[/b]
+	# `gauntlet` is five-to-one in x today and the aspect ratio is an operator's dial;
+	# a slalom built along x inside a portrait world is five rocks stacked through both
+	# side walls, which is a layout that reports twelve blocks and is not a level.
+	var along_x := bounds.size.x >= bounds.size.y
+	var long_extent := maxf(bounds.size.x, bounds.size.y)
+	var short_half := minf(bounds.size.x, bounds.size.y) * 0.5
+	var centre := bounds.get_center()
+
+	var radius := short_half * SLALOM_RADIUS
+	var offset := short_half * SLALOM_OFFSET
+
+	for step in range(SLALOM_COUNT):
+		# Evenly spaced with a half-station of clear floor at each end, so neither spawn
+		# end opens straight onto a rock.
+		var along := (float(step + 1) / float(SLALOM_COUNT + 1) - 0.5) * long_extent
+		var across := offset if step % 2 == 0 else -offset
+
+		out.blocks.append(
+			Vector3(centre.x + along, centre.y + across, radius) if along_x
+			else Vector3(centre.x + across, centre.y + along, radius)
+		)
+
+	return out
+
+
 # --- Reading ---------------------------------------------------------------
 
 func is_empty() -> bool:
@@ -136,6 +228,26 @@ func is_empty() -> bool:
 
 func count() -> int:
 	return blocks.size()
+
+
+## How much floor the rocks stand on, in square units.
+##
+## [b]What a food target has to be read against once a level has geometry in it.[/b] The
+## field is scattered over the whole rectangle and [method HungryWorld._cull_blocked]
+## deletes whatever lands in a rock, so the same target over a smaller floor is less food
+## per unit of walkable ground — a starvation change arriving as a side effect of a level,
+## which is exactly the kind of thing nobody attributes to the level.
+##
+## Summed rather than unioned, so overlapping blocks are counted twice. Every layout here
+## has a positive [method narrowest_gap] and therefore no overlap at all; a layout that
+## grew one would over-report, which errs toward saying there is less floor than there is.
+func covered_area() -> float:
+	var total := 0.0
+
+	for block in blocks:
+		total += PI * block.z * block.z
+
+	return total
 
 
 ## Whether a circle of [param radius] at [param at] overlaps anything solid.
@@ -175,6 +287,60 @@ func narrowest_gap() -> float:
 func fits_through() -> float:
 	var gap := narrowest_gap()
 	return gap * 0.5 if is_finite(gap) else INF
+
+
+## The narrowest way past anything solid, counting the arena's own walls.
+##
+## [b][method narrowest_gap] measures rock against rock, and that is only the whole
+## question for a layout whose gates happen to be between two rocks.[/b] The warrens' are,
+## because it is a ring; the slalom's are not, because a rock standing off one wall of a
+## corridor makes its narrow lane against that wall and its wide one against the other,
+## and neither is a gap between two rocks at all. Asked of the slalom, `narrowest_gap`
+## answers 646 — the distance between two rocks a thousand units apart, which is not a
+## gate, is not the level, and is not a number anybody would notice was wrong.
+##
+## This is the question every layout should be asked instead, and it reduces to the old
+## one where the old one was right: the warrens' corner rocks stand further off the wall
+## than its ring rocks stand from each other, so its answer is unchanged.
+func narrowest_gate(bounds: Rect2) -> float:
+	var narrowest := narrowest_gap()
+
+	for block in blocks:
+		narrowest = minf(narrowest, block.x - bounds.position.x - block.z)
+		narrowest = minf(narrowest, bounds.end.x - block.x - block.z)
+		narrowest = minf(narrowest, block.y - bounds.position.y - block.z)
+		narrowest = minf(narrowest, bounds.end.y - block.y - block.z)
+
+	return narrowest
+
+
+## The largest monster radius that fits through [method narrowest_gate].
+func fits_through_gate(bounds: Rect2) -> float:
+	var gap := narrowest_gate(bounds)
+	return gap * 0.5 if is_finite(gap) else INF
+
+
+## The WIDEST way past the tightest rock, counting the walls.
+##
+## The other half of [method narrowest_gate], and a layout with no answer to it is a cage:
+## a level whose narrowest gate shuts out a grown monster has to have a way round for one,
+## or the mode ends with the leader stuck against a rock. Measured per block — the widest
+## way past each, then the tightest of those — because a route is only as open as its
+## worst rock.
+func widest_way_past(bounds: Rect2) -> float:
+	if blocks.is_empty():
+		return INF
+
+	var tightest := INF
+
+	for block in blocks:
+		var widest := maxf(
+			maxf(block.x - bounds.position.x, bounds.end.x - block.x),
+			maxf(block.y - bounds.position.y, bounds.end.y - block.y)
+		) - block.z
+		tightest = minf(tightest, widest)
+
+	return tightest
 
 
 # --- Resolving -------------------------------------------------------------

@@ -89,17 +89,32 @@ static func frenzy() -> HungryPreset:
 ## it meant `.y`, or that derives a radius from one component: the value is the same, so
 ## the bug is invisible. `headless_round` walks a monster into all four walls here for
 ## exactly that reason.
+##
+## [b]And it is a corridor with things in it now, which is the half that was missing.[/b]
+## Removing the sideways directions makes being chased different; it does not make getting
+## away from somebody a decision, because along a bare corridor the faster monster still
+## arrives. [constant HungryLayout.SLALOM] puts five rocks down it, alternately near one
+## wall and the other, so every one of them has a narrow lane and a wide one and a monster
+## that has grown can only use the wide one. The shortcut changes sides at every rock, so
+## taking it is paid for by the crossing that follows. See [method HungryLayout._slalom].
 static func gauntlet() -> HungryPreset:
 	var preset := HungryPreset.new()
 	preset.id = &"gauntlet"
 	preset.display_name = "Gauntlet"
+	preset.layout = HungryLayout.SLALOM
 
 	# Five to one, and the same area as Frenzy's square. Same amount of food per unit of
 	# floor, so the mode is the shape and not the density — otherwise a corridor would
 	# also be a starvation mode and there would be no telling which half was doing the
 	# work.
 	preset.world_size = Vector2(6708.0, 1342.0)
-	preset.food_target = 700
+
+	# [b]Raised from 700 when the slalom arrived, so the mode's density did not quietly
+	# drop when its floor did.[/b] Five rocks cover about an eighth of the corridor and
+	# `HungryWorld._cull_blocked` deletes everything the scatter puts inside one, so the
+	# old number over the new floor is an eighth less food on the same amount of walkable
+	# ground — a starvation change nobody asked for, arriving as a side effect of a level.
+	preset.food_target = 790
 	preset.fruit_target = 18
 	preset.item_target = 26
 	preset.win_mass = 900.0

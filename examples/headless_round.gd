@@ -37,7 +37,7 @@ const HungryWorld := preload("../game/hungry_world.gd")
 const SEED := 20260828
 const TICK_RATE := 60
 
-const CHECKS := 233
+const CHECKS := 246
 
 var _passed := 0
 var _failed := 0
@@ -89,6 +89,7 @@ func _run() -> void:
 	_test_interface()
 	_test_the_gauntlet()
 	_test_the_warrens()
+	_test_the_slalom()
 	_test_spectating()
 
 	print("")
@@ -1216,9 +1217,23 @@ func _test_the_gauntlet() -> void:
 		"with the same floor area as Frenzy",
 		"%.0f against %.0f" % [area, square]
 	)
+	# [b]The same food per unit of WALKABLE floor, which stopped being the same number
+	# as the target the day this mode got a level.[/b] Five slalom rocks stand on about
+	# an eighth of the corridor and everything the scatter puts inside one is culled, so
+	# `food_target == frenzy.food_target` would now be asserting that the corridor is an
+	# eighth hungrier than the square — a starvation mode arriving as a side effect of a
+	# level, and attributed to the level by nobody.
+	var covered := HungryLayout.for_id(
+		preset.layout, Rect2(Vector2.ZERO, preset.world_size)
+	).covered_area()
+	var density := float(preset.food_target) * (1.0 - covered / area) / area
+	var frenzy_density := float(frenzy.food_target) / square
+
 	_check(
-		preset.food_target == frenzy.food_target,
-		"and the same amount of food on it"
+		absf(density / frenzy_density - 1.0) < 0.03,
+		"and the same amount of food on the floor that is left",
+		"%.1f per million units against %.1f, with %.0f%% of it under rock"
+			% [density * 1.0e6, frenzy_density * 1.0e6, covered / area * 100.0]
 	)
 
 	var world := _make_world(preset, SEED + 31)
@@ -1308,6 +1323,160 @@ func _test_the_gauntlet() -> void:
 	_done()
 
 
+## The corridor's own level, and the question the warrens section could not ask.
+##
+## [b]A gate is a gap between two things, and until now both of them were rocks.[/b] The
+## warrens is a ring, so every gate in it is rock-to-rock and `narrowest_gap` is the whole
+## answer. A slalom rock stands off one wall of a corridor: its narrow lane is against
+## that wall and its wide one against the other, and neither is a gap between two rocks at
+## all. Asked the old question the slalom answers 646 units — two rocks a thousand apart —
+## which is not a gate, is not the level, and would have passed every threshold a reviewer
+## would think to write.
+func _test_the_slalom() -> void:
+	_section("the slalom")
+
+	var preset := HungryPreset.gauntlet()
+
+	if not _check(preset.validate().ok, "the corridor preset is usable"):
+		_done()
+		return
+
+	_check(
+		preset.layout == HungryLayout.SLALOM,
+		"and the corridor is not an empty box any more",
+		"layout %s" % String(preset.layout)
+	)
+
+	var world := _make_world(preset, SEED + 83)
+	_settle(world)
+
+	var bounds := world.arena.bounds
+	var layout := world.layout
+
+	if not _check(
+		layout != null and layout.count() == HungryLayout.SLALOM_COUNT,
+		"five rocks stand down it (%d)" % (layout.count() if layout != null else -1)
+	):
+		_drop(world)
+		_done()
+		return
+
+	# Derived, like the warrens: the same id and the same rectangle, twice.
+	var again := HungryLayout.for_id(HungryLayout.SLALOM, bounds)
+	var identical := again.count() == layout.count()
+
+	for index in range(mini(again.count(), layout.count())):
+		if not again.blocks[index].is_equal_approx(layout.blocks[index]):
+			identical = false
+
+	_check(identical, "and a second build of the same layout is the same rocks")
+
+	var inside := true
+
+	for block in layout.blocks:
+		if not bounds.grow(-block.z).has_point(Vector2(block.x, block.y)):
+			inside = false
+
+	_check(inside, "and every one of them is wholly inside the corridor")
+
+	# [b]They alternate, which is the whole of what makes the shortcut a decision.[/b]
+	# Five rocks on the same side of the centre line is a wall with a corridor beside it,
+	# and it is one constant's sign away at all times.
+	var alternates := true
+	var centre_across := bounds.get_center().y
+
+	for index in range(layout.count() - 1):
+		var here := layout.blocks[index].y - centre_across
+		var next := layout.blocks[index + 1].y - centre_across
+
+		if here * next >= 0.0:
+			alternates = false
+
+	_check(
+		alternates,
+		"and they alternate sides, so the inside line changes wall at every rock"
+	)
+
+	# --- The two lanes, which are the level ---------------------------------
+
+	var rules := world.tunables.mass_rules
+	var gate := layout.narrowest_gate(bounds)
+	var fits := layout.fits_through_gate(bounds)
+	var admits := fits * fits / (rules.base_radius * rules.base_radius)
+
+	_check(
+		gate < layout.narrowest_gap(),
+		"the narrowest way past a rock is against a WALL, not against another rock",
+		"%.0f against a wall, %.0f between two rocks" % [gate, layout.narrowest_gap()]
+	)
+	_check(
+		admits > preset.win_mass * 0.2 and admits < preset.win_mass * 0.45,
+		"the inside lane admits a monster of about a third of the winning mass",
+		"%.0f of %.0f, through a %.0f unit lane" % [admits, preset.win_mass, gate]
+	)
+	_check(
+		rules.radius_for(preset.win_mass) > fits,
+		"so a monster that has won has to take the long way round every rock",
+		"%.0f against %.0f" % [rules.radius_for(preset.win_mass), fits]
+	)
+
+	# [b]And the long way round is open to it, which the ring did not have to prove.[/b]
+	# A ring is escapable by construction — the middle is the part you are shut out of. A
+	# corridor is not: a rock whose wide lane is also too narrow is a cork, and the mode
+	# ends with the leader parked against it. This is the check that says the slalom is a
+	# level rather than a cage.
+	var widest := world.layout.widest_way_past(bounds)
+	_check(
+		widest * 0.5 > rules.radius_for(preset.win_mass),
+		"and the way round is open even to one that has already won",
+		"%.0f unit lane against a radius of %.0f"
+			% [widest, rules.radius_for(preset.win_mass)]
+	)
+
+	# --- A rock stops somebody ----------------------------------------------
+
+	world.add_player(1, "Bram")
+
+	var rock: Vector3 = layout.blocks[0]
+	var rock_at := Vector2(rock.x, rock.y)
+	# Up the corridor from the first rock, on its own line, driving straight at it.
+	world.spawn(1, Vector2(rock_at.x - rock.z * 3.0, rock_at.y))
+	_run_ticks(world, 2)
+
+	var monster := world.monster_for(1)
+
+	if not _check(monster != null and monster.alive, "a monster spawns up the corridor"):
+		_drop(world)
+		_done()
+		return
+
+	var piece_radius := monster.pieces[0].radius()
+	var entered := false
+	var command := Dot2DCommand.new()
+	command.move = Vector2.RIGHT
+
+	for _tick in range(240):
+		_run_ticks(world, 1, {1: command})
+
+		if monster.alive and monster.pieces[0].state.position.distance_to(rock_at) \
+				< rock.z + piece_radius - 1.0:
+			entered = true
+
+	_check(not entered, "and driving straight at a rock never puts it inside one")
+
+	# Round it, rather than through it. The far side, reached at all, is the level
+	# working: a walker that only ever gets pushed back is a wall, and the whole design
+	# is that a rock is something you go past.
+	_check(
+		monster.alive and monster.pieces[0].state.position.x > rock_at.x + rock.z,
+		"and it gets past the rock rather than stopping at it (%.0f past %.0f)"
+			% [monster.pieces[0].state.position.x, rock_at.x + rock.z]
+	)
+
+	_drop(world)
+	_done()
+
+
 func _test_the_warrens() -> void:
 	_section("the warrens")
 
@@ -1324,9 +1493,8 @@ func _test_the_warrens() -> void:
 	)
 	_check(
 		HungryPreset.classic().layout == HungryLayout.NONE
-			and HungryPreset.frenzy().layout == HungryLayout.NONE
-			and HungryPreset.gauntlet().layout == HungryLayout.NONE,
-		"and the three that came before it are still empty boxes",
+			and HungryPreset.frenzy().layout == HungryLayout.NONE,
+		"and the two square modes are still empty boxes",
 		"a layout nobody asked for would change every mode in the game"
 	)
 
@@ -1373,7 +1541,12 @@ func _test_the_warrens() -> void:
 	# player who is behind and shut to the player who is ahead, and a constant changed
 	# without meaning to would quietly make the middle open to everybody or to nobody.
 	var rules := world.tunables.mass_rules
-	var fits := layout.fits_through()
+	# [method HungryLayout.narrowest_gate] rather than `fits_through`, which measures rock
+	# against rock alone. It is the same answer here — the corner rocks stand further off
+	# the wall than the ring rocks stand from each other — and it is deliberately the same
+	# call the slalom section makes, because a level whose gates are against a wall gets a
+	# meaningless number out of the other one and nothing says so.
+	var fits := layout.fits_through_gate(bounds)
 	var admits := fits * fits / (rules.base_radius * rules.base_radius)
 
 	_check(
@@ -1482,7 +1655,7 @@ func _test_the_warrens() -> void:
 	predicted.adopt_layout(HungryLayout.WARRENS)
 	_check(
 		predicted.layout.count() == layout.count()
-			and predicted.layout.narrowest_gap() == layout.narrowest_gap(),
+			and predicted.layout.narrowest_gate(bounds) == layout.narrowest_gate(bounds),
 		"and builds the same twelve from one name in the hello"
 	)
 
