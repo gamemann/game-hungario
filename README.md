@@ -135,3 +135,7 @@ godot --headless --path . res://examples/content.tscn          #  45 checks, the
 ```
 
 Each exits non-zero on failure. See [CLAUDE.md](CLAUDE.md) for the setup and for what each one is actually checking.
+
+## Licence
+
+MIT. See [LICENSE](LICENSE).
