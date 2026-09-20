@@ -37,7 +37,7 @@ const HungryWorld := preload("../game/hungry_world.gd")
 const SEED := 20260828
 const TICK_RATE := 60
 
-const CHECKS := 246
+const CHECKS := 266
 
 var _passed := 0
 var _failed := 0
@@ -90,6 +90,7 @@ func _run() -> void:
 	_test_the_gauntlet()
 	_test_the_warrens()
 	_test_the_slalom()
+	_test_the_reef()
 	_test_spectating()
 
 	print("")
@@ -1750,6 +1751,284 @@ func _test_the_warrens() -> void:
 
 	_drop(world)
 	_done()
+
+
+## The reef: a barrier whose channels widen along it, driven through at two sizes.
+##
+## [b]The question this section asks that the other two levels cannot.[/b] Warrens and
+## Slalom both have one gate width, so "can this monster get through" is a single number
+## and every check over them is a comparison against it. The reef's channels are 248, 442,
+## 635 and 828 units, so the interesting property is not whether a monster fits — it is
+## *which* channels it fits, and therefore how far along the barrier it has to travel
+## before it can cross. That is a list rather than a number, and it is what
+## [method HungryLayout.channel_widths] exists to be asked for.
+##
+## [b]Driven rather than asserted, at both ends of the size range.[/b] Every level check
+## in this file that only compares radii would pass over a barrier that had been built
+## with its rocks in the wrong order, or overlapping, or with the whole chain outside the
+## world: the arithmetic is the same either way. A small monster is driven at the tight
+## channel and has to come out the far side; a monster at the winning mass is driven at
+## the same channel and has to still be on the near side when the clock runs out.
+func _test_the_reef() -> void:
+	_section("the reef")
+
+	var preset := HungryPreset.reef()
+
+	if not _check(preset.validate().ok, "the reef preset is usable"):
+		_done()
+		return
+
+	_check(
+		preset.layout == HungryLayout.REEF,
+		"and it is the third mode with geometry in it",
+		"layout %s" % String(preset.layout)
+	)
+
+	var world := _make_world(preset, SEED + 131)
+	_settle(world)
+
+	var bounds := world.arena.bounds
+	var layout := world.layout
+
+	if not _check(
+		layout != null and layout.count() == HungryLayout.REEF_COUNT,
+		"five rocks stand across it (%d)" % (layout.count() if layout != null else -1)
+	):
+		_drop(world)
+		_done()
+		return
+
+	var again := HungryLayout.for_id(HungryLayout.REEF, bounds)
+	var identical := again.count() == layout.count()
+
+	for index in range(mini(again.count(), layout.count())):
+		if not again.blocks[index].is_equal_approx(layout.blocks[index]):
+			identical = false
+
+	_check(identical, "and a second build of the same layout is the same rocks")
+
+	var inside := true
+
+	for block in layout.blocks:
+		if not bounds.grow(-block.z).has_point(Vector2(block.x, block.y)):
+			inside = false
+
+	_check(inside, "and every one of them is wholly inside the world")
+
+	# --- The channels, which are the level ----------------------------------
+
+	# [b]The rocks are walked rather than the constants re-read.[/b] This is the same rule
+	# the 3D maps in this family follow: one description, more than one representation,
+	# and every representation derived from the description rather than restated. The
+	# widths below come from `channel_widths`; the gaps come from the discs the world
+	# actually built. A chain laid out in the wrong order, or with a sign flipped, agrees
+	# with the constants and disagrees here.
+	var short_half := minf(bounds.size.x, bounds.size.y) * 0.5
+	var wanted := HungryLayout.channel_widths(short_half)
+	var measured := PackedFloat32Array()
+
+	for index in range(layout.count() - 1):
+		var here := layout.blocks[index]
+		var next := layout.blocks[index + 1]
+		measured.append(
+			Vector2(here.x, here.y).distance_to(Vector2(next.x, next.y)) - here.z - next.z
+		)
+
+	var agree := wanted.size() == measured.size()
+
+	for index in range(mini(wanted.size(), measured.size())):
+		if absf(wanted[index] - measured[index]) > 1.0:
+			agree = false
+
+	_check(
+		agree,
+		"the four channels it builds are the four channels it describes",
+		"built %s, described %s" % [_widths(measured), _widths(wanted)]
+	)
+
+	var widens := measured.size() >= 2
+
+	for index in range(measured.size() - 1):
+		if measured[index + 1] <= measured[index] + 1.0:
+			widens = false
+
+	_check(
+		widens,
+		"and every one of them is wider than the one before it",
+		"%s" % _widths(measured)
+	)
+
+	# [b]The end run-round is what stops this being the warrens with fewer gates.[/b] It
+	# has to sit between the tight channel and the two open ones: wider and the tight
+	# channel is decoration because everybody can walk round instead, narrower and it is a
+	# slot nothing can use and the barrier is really a wall with four holes.
+	var gate := layout.narrowest_gate(bounds)
+	var run_round := INF
+
+	for block in layout.blocks:
+		run_round = minf(run_round, minf(
+			minf(block.x - bounds.position.x, bounds.end.x - block.x),
+			minf(block.y - bounds.position.y, bounds.end.y - block.y)
+		) - block.z)
+
+	_check(
+		absf(gate - measured[0]) <= 1.0,
+		"the tightest thing on the map is the tight channel, walls included",
+		"%.0f, against %.0f round the end" % [gate, run_round]
+	)
+	_check(
+		run_round > measured[0] and run_round < measured[2],
+		"and the way round the end is better than the tight channel and worse than the third",
+		"%.0f, between %.0f and %.0f" % [run_round, measured[0], measured[2]]
+	)
+	# The layout's own arithmetic for the same distance, which is what the design is
+	# argued in. Two ways to the one number: if they ever disagree, the reasoning in
+	# `_reef`'s docs is about a map that is not the one being built.
+	_check(
+		absf(run_round - short_half * HungryLayout.reef_end_fraction()) <= 1.0,
+		"and it is the distance the layout says it leaves",
+		"%.0f measured, %.0f derived"
+			% [run_round, short_half * HungryLayout.reef_end_fraction()]
+	)
+
+	# --- Not a cage ---------------------------------------------------------
+
+	var rules := world.tunables.mass_rules
+	var won := rules.radius_for(preset.win_mass)
+
+	_check(
+		measured[measured.size() - 1] * 0.5 > won,
+		"a monster at the winning mass still fits the open end",
+		"a radius of %.0f through a %.0f channel" % [won, measured[measured.size() - 1]]
+	)
+	_check(
+		measured[0] * 0.5 < won and run_round * 0.5 < won,
+		"and it fits neither the tight channel nor the way round, so it has to travel",
+		"%.0f against a %.0f channel and a %.0f run-round"
+			% [won, measured[0], run_round]
+	)
+
+	# --- Driven through, small ----------------------------------------------
+
+	# The tight channel's middle, and the two points either side of the barrier on its own
+	# line. The barrier runs along the shorter axis, so crossing it is a move along the
+	# other one.
+	var first := layout.blocks[0]
+	var second := layout.blocks[1]
+	var mouth := (Vector2(first.x, first.y) + Vector2(second.x, second.y)) * 0.5
+	var across := Vector2(0.0, 1.0) if bounds.size.x < bounds.size.y \
+		else Vector2(1.0, 0.0)
+	var start := mouth - across * 600.0
+	var target := mouth + across * 900.0
+
+	world.add_player(1, "Ada")
+	world.spawn(1, start)
+	_run_ticks(world, 2)
+
+	var monster := world.monster_for(1)
+
+	if not _check(monster != null and monster.alive, "a monster spawns short of the reef"):
+		_drop(world)
+		_done()
+		return
+
+	# [b]Sampled every tick.[/b] A push-out that fails for one frame and recovers is
+	# invisible to a reading taken at the end, and one frame inside a rock is one frame of
+	# eating through a wall.
+	var deepest := INF
+	var small_progress := 0.0
+
+	for _i in range(TICK_RATE * 12):
+		world.tick({1: _aim_at(monster.centre(), target)})
+
+		for block in layout.blocks:
+			deepest = minf(
+				deepest,
+				monster.centre().distance_to(Vector2(block.x, block.y)) - block.z
+			)
+
+		small_progress = maxf(small_progress, (monster.centre() - mouth).dot(across))
+
+	_check(
+		deepest > -2.0,
+		"driving a monster through the tight channel never puts it inside a rock",
+		"closest approach to a face %.0f" % deepest
+	)
+	_check(
+		small_progress > 400.0,
+		"and a starting monster comes out the far side of it",
+		"%.0f past the mouth of a %.0f channel" % [small_progress, measured[0]]
+	)
+
+	# --- Driven at the same channel, grown ----------------------------------
+
+	# [b]Nothing changes but the radius.[/b] Same seed, same world, same channel, same
+	# commands, twice the ticks — so the only thing that can make the second run end on
+	# the near side is the size of the thing running it.
+	world.spawn(1, start)
+	_run_ticks(world, 2)
+	world.feed_player(1, preset.win_mass - monster.mass())
+	_run_ticks(world, 2)
+
+	var grown := monster.pieces[0].radius()
+	var big_progress := -INF
+
+	for _i in range(TICK_RATE * 24):
+		world.tick({1: _aim_at(monster.centre(), target)})
+		big_progress = maxf(big_progress, (monster.centre() - mouth).dot(across))
+
+	_check(
+		grown * 2.0 > measured[0],
+		"a monster at the winning mass is wider than the tight channel",
+		"%.0f across, against a %.0f channel" % [grown * 2.0, measured[0]]
+	)
+	_check(
+		big_progress < small_progress - 200.0,
+		"and the same run leaves it on the near side of the reef",
+		"%.0f past the mouth, where the small one reached %.0f"
+			% [big_progress, small_progress]
+	)
+
+	# --- Nothing edible is buried, and nobody spawns in a rock --------------
+
+	var buried := 0
+
+	for grid_id in world.field.alive_ids():
+		if layout.blocked(world.field.position_of(grid_id), world.field.radius_of(grid_id)):
+			buried += 1
+
+	_check(buried == 0, "nothing edible is standing inside a rock", "%d buried" % buried)
+	_check(
+		world.field.alive_count() > preset.food_target,
+		"and the field still fills to the target it asks for",
+		"%d alive against a food target of %d"
+			% [world.field.alive_count(), preset.food_target]
+	)
+
+	# A client is TOLD which layout, and builds it. Nothing about the rocks travels.
+	var predicted := _make_world(preset, SEED + 131)
+	predicted.is_authority = false
+	_settle(predicted)
+	predicted.adopt_layout(HungryLayout.REEF)
+	_check(
+		predicted.layout.count() == layout.count()
+			and predicted.layout.narrowest_gate(bounds) == layout.narrowest_gate(bounds),
+		"and a client builds the same five from one name in the hello"
+	)
+	_drop(predicted)
+
+	_drop(world)
+	_done()
+
+
+## A list of gap widths, for a check's detail line.
+func _widths(gaps: PackedFloat32Array) -> String:
+	var parts := PackedStringArray()
+
+	for gap in gaps:
+		parts.append("%.0f" % gap)
+
+	return "/".join(parts)
 
 
 func _test_determinism() -> void:

@@ -186,6 +186,67 @@ static func warrens() -> HungryPreset:
 	return preset
 
 
+## A wall across the world with four channels through it, tight at one end and open at
+## the other.
+##
+## [b]Warrens asks "do you fit"; Reef asks "how far will you walk to fit".[/b] Every gate
+## in the warrens is the same width, because a ring of identical rocks has to be, and
+## every rock in the gauntlet leaves the same two lanes. So in both of those a monster
+## learns its own answer once and then knows the whole map. Here the channels widen along
+## the barrier — 248, 442, 635 and 828 units — so growing does not decide whether you can
+## cross, it decides how far down the reef you have to travel first, in the open, with
+## everybody able to see which end you are heading for.
+##
+## [b]The ends close as you grow, and that is the difference from the warrens.[/b] The
+## chain stops 361 units short of each wall, which is wider than the tight channel and
+## narrower than the two open ones: a run-round is a small monster's route, a detour a
+## middling one would rather not take, and shut to a leader. The warrens' perimeter lane
+## is open to everybody for ever, which is exactly why its ring is escapable; this one is
+## not, and that is what makes the open end of the reef worth standing on.
+##
+## [b]Not a cage, and the margin is in the numbers rather than in an intention.[/b] The
+## widest channel admits a radius of 414, which on this curve is a mass of 2140 — half as
+## much again as [member win_mass]. A monster too big for every channel has to be bigger
+## than the mass that ends the round.
+static func reef() -> HungryPreset:
+	var preset := HungryPreset.new()
+	preset.id = &"reef"
+	preset.display_name = "Reef"
+	preset.layout = HungryLayout.REEF
+
+	# Between Warrens and Classic. Big enough that walking to the open end is a journey
+	# rather than a step, and small enough that the tight end is somewhere a small
+	# monster can still get to before it has outgrown it.
+	preset.world_size = Vector2(4600.0, 4600.0)
+
+	# [b]Classic's density over the floor that is actually left.[/b] Classic scatters
+	# 1,100 over 5,200 squared; the same food per unit of rectangle here is 861, and the
+	# five rocks cover 2.2% of it, which `HungryWorld._cull_blocked` deletes. 880 is what
+	# survives the cull at Classic's density — the same arithmetic Warrens and Gauntlet
+	# do, for the same reason: a level must not arrive as a starvation change.
+	preset.food_target = 880
+
+	# [b]Above density, like Warrens and for a sharper version of its reason.[/b] A
+	# pepper splits somebody into halves that fit a channel they did not fit before, so
+	# on this map a throwable is a door that opens in the wrong place for whoever is
+	# standing in it — and it is the only way to make somebody cross where they did not
+	# choose to.
+	preset.fruit_target = 15
+	preset.item_target = 26
+
+	preset.win_mass = 1500.0
+	preset.max_speed = 445.0
+
+	# [b]The crossing tax.[/b] Splitting is how a grown monster uses a channel it does
+	# not fit, and unlike the warrens' gates a channel is a passage rather than a
+	# threshold: you are in two halves for the length of it and there is a wall on both
+	# sides. Twelve seconds rather than Warrens' eight, because the exposure is longer
+	# and being caught halfway through is the thing this mode is about.
+	preset.merge_delay_sec = 12.0
+	preset.time_limit_sec = 420.0
+	return preset
+
+
 static func for_id(preset_id: StringName) -> HungryPreset:
 	match preset_id:
 		&"frenzy":
@@ -194,6 +255,8 @@ static func for_id(preset_id: StringName) -> HungryPreset:
 			return gauntlet()
 		&"warrens":
 			return warrens()
+		&"reef":
+			return reef()
 		_:
 			return classic()
 

@@ -498,7 +498,7 @@ leaving: `extend_needs_majority` (two documented policies, one behaviour),
 can never do anything), and `begin_on_apply` (both the director and the host announcing one
 play halves every cooldown).
 
-## Four modes, and the last two are shapes rather than dials
+## Five modes, and the last three are shapes rather than dials
 
 `classic` and `frenzy` are the same square at two sizes: bigger and slower, smaller and
 faster, with `merge_delay_sec` deciding whether splitting is a commitment or a move.
@@ -532,6 +532,12 @@ Nothing was wrong. Twelve checks that would have passed on a square whether or n
 `narrowest_gate(bounds)` is the question every layout should be asked, and it reduces to the old one where the old one was right: the warrens' corner rocks stand further off the wall than its ring rocks stand from each other, so its answer is unchanged and its section now asks the new one. `HungryLayout.ids()` exists for the same reason — the gate section named `warrens` because `warrens` was the only layout there was, and a check named after one level proves nothing about the next.
 
 **A level also changes the food, and that arrives as a side effect nobody attributes to the level.** The field scatters over the whole rectangle and `_cull_blocked` deletes what lands in a rock, so five slalom rocks over an eighth of the corridor made `gauntlet.food_target == frenzy.food_target` an assertion that the corridor is an eighth hungrier than the square. The target is 790 now and the check compares food per unit of *walkable* floor, through `HungryLayout.covered_area`.
+
+**`reef` is a wall across the world with four channels through it, and it asks a question the other two levels cannot.** Warrens' eight gates are eight copies of one gate, because a ring of identical rocks has to be, and every rock in the slalom leaves the same near lane and the same far one. So in both of those a monster learns its own answer once and then knows the whole map. The reef's channels are **248, 442, 635 and 828 units**, so size does not decide whether you can cross — it decides *how far along the barrier you have to travel first*, in the open, with everybody able to see which end you are heading for. The interesting property is a list rather than a number, which is what `HungryLayout.channel_widths` exists to be asked for.
+
+**The ends close as you grow, and that is where it parts company with the warrens.** The chain stops 361 units short of each wall: wider than the tight channel and narrower than the two open ones, so a run-round is a small monster's route, a detour a middling one would rather not take, and shut to a leader. The warrens' perimeter lane is open to everybody for ever, which is exactly why its ring is escapable; this one is not, and that is what makes the open end of the reef worth standing on. It is still not a cage, and the margin is in the numbers rather than in an intention: the widest channel admits a radius of 414, a mass of 2140 against a `win_mass` of 1500.
+
+**Its section drives the crossing rather than comparing radii**, at both ends of the size range, because every arithmetic check over a barrier passes just as happily on one built with its rocks in the wrong order, overlapping, or laid out entirely outside the world. A starting monster is driven at the tight channel and has to come out the far side; one at the winning mass is driven at the same channel with the same commands and twice the ticks and has to still be on the near side. And the four gaps between the discs the world actually built are compared against the four `channel_widths` describes — one description, two representations, which is the rule the 3D maps in this family follow and the first time a 2D layout here has followed it.
 
 **`warrens` is the first world with anything standing in it, and the mechanic is that mass IS radius.** The other three are empty boxes: the only thing between two monsters is distance, so being caught is a failure of speed and the leader catches everybody eventually. Warrens puts a ring of eight rocks around the middle with 360-unit gates between them, and a gate is a *mass limit* — it admits a radius under 180, which on this curve is about 500 mass against a winning mass of 1600. The good middle of the map is open to the players who are behind and shut to the player who is ahead, which is a catch-up mechanic made out of geometry rather than out of a rule, and no dial in `HungryPreset` could have produced it.
 
@@ -647,7 +653,7 @@ find . -name '*.gd' -not -path './.godot/*' -not -path './addons/*' | while read
     godot --headless --path . --check-only --script "res://${f#./}"
 done
 
-godot --headless --path . res://examples/headless_round.tscn   # 246 — the game
+godot --headless --path . res://examples/headless_round.tscn   # 266 — the game
 godot --headless --path . res://examples/headless_stack.tscn   #  24 checks
 godot --headless --path . res://examples/headless_net.tscn     # 126 — the netcode
 godot --headless --path . res://examples/dedicated.tscn        # 167 — a real DotServer
@@ -656,7 +662,7 @@ godot --headless --path . res://examples/content.tscn          #  45 — the clo
 godot --headless --path . res://examples/headless_presentation.tscn  # 48 — the client half
 ```
 
-730 checks across seven suites. Add `-- --verbose` to `dedicated`, `sandbox` or `content` when one fails and
+750 checks across seven suites. Add `-- --verbose` to `dedicated`, `sandbox` or `content` when one fails and
 the reason is in a log line rather than in the assertion.
 
 **Run `headless_round` after any change to dot-2d** and **`headless_net` after any change
@@ -683,6 +689,7 @@ must do and the thing nothing in this family had ever checked.
 ```bash
 tools/screenshot_map.sh warrens        # the whole arena, a player's view, and a grown one
 tools/screenshot_map.sh gauntlet       # the corridor and its slalom
+tools/screenshot_map.sh reef           # the barrier and its four channels
 tools/screenshot_menus.sh              # the screens
 ```
 

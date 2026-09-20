@@ -31,7 +31,11 @@ const HungryLayout := preload("hungry_layout.gd")
 
 const CHANNEL := "hungry.layout"
 
-## Nothing standing in the arena. What `classic`, `frenzy` and `gauntlet` use.
+## Nothing standing in the arena. What `classic` and `frenzy` use.
+##
+## Deliberately still two of them: the square modes are the control this game measures a
+## level against, and "the same square with rocks in it" is only a claim if there is a
+## square without them.
 const NONE := &""
 
 ## A ring of gates around a middle, with cover in the corners.
@@ -39,6 +43,9 @@ const WARRENS := &"warrens"
 
 ## A line of rocks down a corridor, alternately near one wall and the other.
 const SLALOM := &"slalom"
+
+## A barrier across the world whose channels widen from one end to the other.
+const REEF := &"reef"
 
 
 ## Every layout that is a level, so a check can ask all of them the same question.
@@ -51,7 +58,7 @@ const SLALOM := &"slalom"
 ## with its gates measured against a WALL rather than against another rock, a case the
 ## question as originally asked cannot even see. See [method narrowest_gate].
 static func ids() -> Array[StringName]:
-	return [WARRENS, SLALOM]
+	return [WARRENS, SLALOM, REEF]
 
 
 ## What is solid, as `(x, y, radius)` in world units.
@@ -76,6 +83,8 @@ static func for_id(layout_id: StringName, bounds: Rect2) -> HungryLayout:
 			return _warrens(bounds)
 		SLALOM:
 			return _slalom(bounds)
+		REEF:
+			return _reef(bounds)
 		_:
 			return none()
 
@@ -218,6 +227,129 @@ static func _slalom(bounds: Rect2) -> HungryLayout:
 		)
 
 	return out
+
+
+# --- reef ------------------------------------------------------------------
+
+## How many rocks the barrier is made of. Five leaves four channels through it.
+const REEF_COUNT := 5
+
+## How big one reef rock is, as a fraction of the SHORT half-extent.
+const REEF_RADIUS := 0.075
+
+## The narrowest channel, edge to edge, as the same fraction.
+##
+## At `reef`'s world size this is 248 units, so it admits a radius of 124 — about a
+## tenth of the winning mass on this curve. It is deliberately the tightest thing on the
+## map, walls included: see [method reef_end_fraction], which is what keeps it so.
+const REEF_TIGHT := 0.108
+
+## The widest channel, same units.
+##
+## 828 units at `reef`'s size, so a radius of 414 and a mass of 2140 — well past
+## [member HungryPreset.win_mass] for that mode. [b]That margin is the mode's promise
+## that it is not a cage[/b]: the only way to be too big for every channel is to be half
+## as big again as the mass that ends the round.
+const REEF_WIDE := 0.36
+
+
+## A barrier across the world with four channels through it, tight at one end and open at
+## the other.
+##
+## [b]The warrens and the slalom both ask the same question everywhere on the map.[/b] The
+## warrens' eight gates are eight copies of one gate, because a ring of identical rocks
+## has to be; the slalom's five rocks leave the same near lane and the same far lane at
+## every one of them. So in both, "can I fit through" has one answer, and a monster
+## learns it once and then knows the whole level.
+##
+## [b]Here the answer depends on WHERE you cross.[/b] The channels widen along the
+## barrier — 248, 442, 635 and 828 units at this mode's size — so a monster's size does
+## not decide whether it can cross, it decides [i]how far it has to walk first[/i]. A
+## small one crosses on the spot. A grown one has to commit to a journey down the length
+## of the reef, in the open, to the one end that will let it through, while everybody
+## watching knows exactly where it is going. That is the level: not a gate you fit or do
+## not fit, but a tax on crossing that is paid in distance and in being predictable.
+##
+## [b]The ends are the other half, and they close as you grow.[/b] The chain stops
+## [method reef_end_fraction] of a half-extent short of each wall, which is wider than the
+## tight channel and narrower than the two open ones — so the run-round is a route for a
+## small monster, a worse route than the third channel for a middling one, and shut to a
+## large one. The
+## warrens' perimeter lane is open to everybody for ever and is why its ring is escapable;
+## this map's is not, which is what makes the far end worth owning.
+##
+## Built along the SHORT axis and sized off the short half-extent, so the barrier spans
+## the world rather than sitting in the middle of it: across a corridor it is a wall with
+## four channels, and in a square it is the same thing at the same proportions. A chain
+## built along the long axis would divide a corridor into two lanes, which is a different
+## level and a worse one.
+static func _reef(bounds: Rect2) -> HungryLayout:
+	var out := HungryLayout.new()
+	out.id = REEF
+
+	# The chain runs along the SHORTER axis, so it is a barrier rather than a central
+	# reservation. `slalom` reads the same rectangle and takes the opposite answer,
+	# because a slalom is a thing you go along and a reef is a thing you go through.
+	var along_x := bounds.size.x < bounds.size.y
+	var short_half := minf(bounds.size.x, bounds.size.y) * 0.5
+	var centre := bounds.get_center()
+
+	var radius := short_half * REEF_RADIUS
+	var gaps := channel_widths(short_half)
+
+	# Laid out from one end so the cumulative sum is the position, rather than from the
+	# middle outward: the channels are not symmetric, so there is no middle to work from.
+	var span := 0.0
+
+	for gap in gaps:
+		span += gap + radius * 2.0
+
+	var along := -span * 0.5
+
+	for step in range(REEF_COUNT):
+		if step > 0:
+			along += gaps[step - 1] + radius * 2.0
+
+		out.blocks.append(
+			Vector3(centre.x + along, centre.y, radius) if along_x
+			else Vector3(centre.x, centre.y + along, radius)
+		)
+
+	return out
+
+
+## The four channel widths, tight end first, in world units.
+##
+## [b]Public because the level IS this list[/b], and a check that re-derives it from the
+## rock positions is checking arithmetic rather than design. `headless_round` asks for it
+## and then walks the blocks to confirm the rocks it built actually leave these gaps,
+## which is the two-representations-from-one-description rule the 3D maps in this family
+## follow.
+static func channel_widths(short_half: float) -> PackedFloat32Array:
+	var out := PackedFloat32Array()
+
+	for step in range(REEF_COUNT - 1):
+		out.append(short_half * lerpf(
+			REEF_TIGHT, REEF_WIDE, float(step) / float(REEF_COUNT - 2)
+		))
+
+	return out
+
+
+## How much clear floor the barrier leaves at each end, as a fraction of the short
+## half-extent.
+##
+## Derived rather than chosen, because it is not a dial — it is whatever is left once the
+## chain and its channels have been laid out, and the whole design depends on where it
+## falls between [constant REEF_TIGHT] and [constant REEF_WIDE]. Stating it as a constant
+## would be a second copy of the arithmetic and it would be the copy that went stale.
+static func reef_end_fraction() -> float:
+	var span := 0.0
+
+	for gap in channel_widths(1.0):
+		span += gap + REEF_RADIUS * 2.0
+
+	return 1.0 - span * 0.5 - REEF_RADIUS
 
 
 # --- Reading ---------------------------------------------------------------

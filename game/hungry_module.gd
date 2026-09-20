@@ -46,6 +46,7 @@ const GAME_CLASSIC := "hungry_classic"
 const GAME_FRENZY := "hungry_frenzy"
 const GAME_GAUNTLET := "hungry_gauntlet"
 const GAME_WARRENS := "hungry_warrens"
+const GAME_REEF := "hungry_reef"
 
 var world: HungryWorld = null
 var net: DotNetManager = null
@@ -1248,6 +1249,7 @@ static func game_descriptors() -> Array[DotGameDescriptor]:
 		[GAME_FRENZY, "Hungario: Frenzy", HungryPaths.rebase("res://game/modes/frenzy.tscn")],
 		[GAME_GAUNTLET, "Hungario: Gauntlet", HungryPaths.rebase("res://game/modes/gauntlet.tscn")],
 		[GAME_WARRENS, "Hungario: Warrens", HungryPaths.rebase("res://game/modes/warrens.tscn")],
+		[GAME_REEF, "Hungario: Reef", HungryPaths.rebase("res://game/modes/reef.tscn")],
 	]:
 		var descriptor := DotGameDescriptor.new()
 		descriptor.game_id = String(row[0])

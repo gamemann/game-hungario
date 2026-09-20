@@ -1205,10 +1205,17 @@ func _test_vote() -> void:
 	var maps := _module().maps
 
 	_check(maps != null, "the map rotation is up")
+	# [b]Counted against the descriptor list rather than against a literal.[/b] The
+	# catalogue is BUILT from `HungryModule.game_descriptors` precisely so that adding a
+	# mode does not mean editing a second list; a check that restated the number would be
+	# the third copy, and it is the copy that goes stale — this one said "four" the night
+	# `reef` became the fifth.
+	var modes := HungryModule.game_descriptors().size()
+
 	_check(
-		maps.catalogue != null and maps.catalogue.size() == 4,
-		"with four modes in the catalogue (%d)"
-			% (maps.catalogue.size() if maps.catalogue != null else -1)
+		maps.catalogue != null and maps.catalogue.size() == modes,
+		"with every one of the game's modes in the catalogue (%d of %d)"
+			% [maps.catalogue.size() if maps.catalogue != null else -1, modes]
 	)
 	_check(
 		maps.director != null and maps.director.source != null
