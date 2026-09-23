@@ -670,13 +670,13 @@ done
 godot --headless --path . res://examples/headless_round.tscn   # 286 — the game
 godot --headless --path . res://examples/headless_stack.tscn   #  24 checks
 godot --headless --path . res://examples/headless_net.tscn     # 126 — the netcode
-godot --headless --path . res://examples/dedicated.tscn        # 167 — a real DotServer
+godot --headless --path . res://examples/dedicated.tscn        # 169 — a real DotServer
 godot --headless --path . res://examples/sandbox.tscn          #  84 — two real clients
 godot --headless --path . res://examples/content.tscn          #  46 — the cloud path
 godot --headless --path . res://examples/headless_presentation.tscn  # 48 — the client half
 ```
 
-781 checks across seven suites. Add `-- --verbose` to `dedicated`, `sandbox` or `content` when one fails and
+783 checks across seven suites. Add `-- --verbose` to `dedicated`, `sandbox` or `content` when one fails and
 the reason is in a log line rather than in the assertion.
 
 **Run `headless_round` after any change to dot-2d** and **`headless_net` after any change
@@ -856,6 +856,14 @@ What a player loses is the Enter key, and it is one setting away.
 | `chat_near_key` | `U` by default, and it opens the proximity channel. |
 
 `sandbox` is where the server's side of this is checked over a real socket: a joining client is told what is carrying chat before it has any line to draw, and the suite keeps that payload apart from the lines it asserts must never arrive twice.
+
+## No message preloads itself
+
+`hungry_event.gd` and `hungry_request.gd` each began by preloading themselves, for a typed `of()` factory. mg-buses-from-hell measured that line (8ed866c) as enough to leak the whole script graph at exit on Godot 4.7.2: a script that `extends DotNetMessage` and preloads ITSELF, first loaded by a module inside a running `DotServer` — which is how every deployed server loads a game. Both are built with `new(kind, body)` now, an `_init` whose arguments default because dot-net's registry decodes with a bare `new()`.
+
+`dedicated`'s last section, **exiting clean**, reads every `DotNetMessage` script under `game/` as text and fails on a self-preload. It is on the source deliberately: the leak is printed by the engine after `quit()`, where no assertion can reach.
+
+**Here it was not the cause, and `[leak-1]` is still open.** Exactly the same exit warnings before the change as after (2026-09-23): `dedicated` 69 ObjectDB instances and 10 resources; `sandbox` 379 and 295 plus a VariantPools page; `content` clean both times. `dedicated`'s count is too small to be the whole script graph; `sandbox`'s is that shape.
 
 ## Things deliberately not here
 

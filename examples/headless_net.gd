@@ -399,7 +399,7 @@ func _test_event_wire() -> void:
 
 	# A body claiming a kind that does not exist has to be refused rather than
 	# dispatched, because the handler's `match` would silently fall through.
-	var bogus := HungryEvent.of(31, PackedByteArray())
+	var bogus := HungryEvent.new(31, PackedByteArray())
 	_check(not bogus.validate().ok, "an unknown event kind is refused")
 	_done()
 
@@ -1255,7 +1255,7 @@ func _test_direction_enforced() -> void:
 	# leaderboard. It is checked against the transport's view of the sender, never
 	# against a peer id inside the payload.
 	var writer := DotNetWriter.new()
-	var event := HungryEvent.of(HungryEvents.Kind.DIED, HungryEvents.write_pair(7, 7))
+	var event := HungryEvent.new(HungryEvents.Kind.DIED, HungryEvents.write_pair(7, 7))
 	_server_net.messages.encode(event, writer)
 
 	var before := _server_net.stats.direction_violations

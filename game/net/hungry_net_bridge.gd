@@ -500,7 +500,7 @@ func _broadcast(kind: int, body: PackedByteArray) -> void:
 		return
 
 	for peer_id in _ready_peers.keys():
-		net.send(HungryEvent.of(kind, body), int(peer_id))
+		net.send(HungryEvent.new(kind, body), int(peer_id))
 
 
 ## Sends an event to one peer.
@@ -514,7 +514,7 @@ func _tell(peer_id: int, kind: int, body: PackedByteArray) -> void:
 	if net == null or not net.is_server or peer_id <= 0:
 		return
 
-	net.send(HungryEvent.of(kind, body), peer_id)
+	net.send(HungryEvent.new(kind, body), peer_id)
 
 
 ## Marks a peer able to receive, and gives it everything it has missed.
@@ -1442,7 +1442,7 @@ func ask_for_world() -> void:
 	if net == null or net.is_server:
 		return
 
-	net.send(HungryRequest.of(HungryEvents.Ask.READY, PackedByteArray()), 0)
+	net.send(HungryRequest.new(HungryEvents.Ask.READY, PackedByteArray()), 0)
 
 
 ## Publishes this client's chosen loadout. Client side.
@@ -1455,7 +1455,7 @@ func publish_loadout(loadout: DotLoadout) -> void:
 		return
 
 	net.send(
-		HungryRequest.of(
+		HungryRequest.new(
 			HungryEvents.Ask.LOADOUT, HungryEvents.write_loadout(loadout)
 		),
 		0
@@ -1529,7 +1529,7 @@ func say(channel_id: StringName, text: String) -> void:
 		return
 
 	net.send(
-		HungryRequest.of(HungryEvents.Ask.SAY, HungryEvents.write_say(channel_id, text)),
+		HungryRequest.new(HungryEvents.Ask.SAY, HungryEvents.write_say(channel_id, text)),
 		0
 	)
 
@@ -1540,7 +1540,7 @@ func vote(token: String) -> void:
 		return
 
 	net.send(
-		HungryRequest.of(HungryEvents.Ask.VOTE, HungryEvents.write_vote(token)), 0
+		HungryRequest.new(HungryEvents.Ask.VOTE, HungryEvents.write_vote(token)), 0
 	)
 
 
@@ -1550,7 +1550,7 @@ func publish_avatar(avatar: DotAvatar) -> void:
 		return
 
 	net.send(
-		HungryRequest.of(
+		HungryRequest.new(
 			HungryEvents.Ask.AVATAR,
 			HungryEvents.write_avatar(avatar, avatar_schema)
 		),
