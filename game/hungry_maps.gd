@@ -25,6 +25,38 @@ const HungryModule := preload("hungry_module.gd")
 
 const CHANNEL := "hungry.maps"
 
+## Where a server owner configures this game's vote. Empty skips the file.
+##
+## [b][method vote_rules] is this game's DEFAULTS, not its configuration.[/b] They layer
+## the way every [DotConfig] in the family does, so an owner changes a number without
+## touching code:
+##
+## [codeblock]
+## vote_rules()  <  game.yml metadata: map_vote:  <  this file  <  DOT_VOTE_*  <  --vote-*
+## [/codeblock]
+##
+## The file is JSON, keyed exactly as [DotVoteRules] is, enums by name, and sits beside
+## [code]user://cfg/hungry.json[/code]. The end-of-mode vote and its extend option,
+## which is what an owner usually wants to change:
+##
+## [codeblock]
+## {
+##     "end_vote": true,          "vote_lead_sec": 90,
+##     "include_extend": true,    "extend_seconds": 300,    "max_extends": 2
+## }
+## [/codeblock]
+##
+## [code]DOT_VOTE_EXTEND_SECONDS=300[/code] or [code]--vote-include-extend=false[/code]
+## do the same for one run. [b]The mode timer follows[/b]: [member limit] is built from
+## the layered rules, so an owner's [code]duration_sec[/code] and extend settings reach
+## [code]timeleft[/code] as well as the ballot. A result that does not validate is
+## refused whole and the defaults stand, with the reason in the log.
+const CONFIG_PATH := "user://cfg/hungry_vote.json"
+
+## The key in the running game's descriptor metadata an operator's overrides are read
+## from — [code]metadata: map_vote:[/code] in a delivered game's [code]game.yml[/code].
+const METADATA_KEY := "map_vote"
+
 
 ## The vote picked something and the server should change to it.
 signal change_due(game_id: StringName)
@@ -46,6 +78,9 @@ var player_count_fn: Callable = Callable()
 
 ## Whether a voter is an admin.
 var is_admin_fn: Callable = Callable()
+
+## The file [method setup] layers over the defaults. A test sets it empty.
+var config_path: String = CONFIG_PATH
 
 
 # --- The catalogue ---------------------------------------------------------
@@ -186,6 +221,20 @@ func setup(p_games: Object) -> DotResult:
 
 	if not problem.ok:
 		return problem.wrap("The vote rules are not usable")
+
+	# The owner's layers over the defaults that just validated, BEFORE the mode timer
+	# below is built from them — so what an owner sets reaches `timeleft` too. Refused
+	# whole, loudly and not fatally, when the result does not validate.
+	var layered := rules.layer_over_defaults(
+		config_path, DotVoteGameSource.running_game_metadata(METADATA_KEY)
+	)
+
+	if not layered.ok:
+		DotLog.error(CHANNEL, "the vote configuration is not usable; using the defaults", {
+			"path": config_path,
+			"why": layered.error.message,
+			"detail": layered.error.detail,
+		})
 
 	director = DotVoteDirector.new()
 	director.name = "Vote"

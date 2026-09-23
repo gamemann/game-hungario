@@ -124,6 +124,18 @@ See [web/README.md](web/README.md). Short version: the server listens on **WebSo
 | `changegame hungry_frenzy` | Switch mode without dropping anybody. |
 | `votemap hungry_frenzy` | Let the players decide. dot-server's own, no code here. |
 
+## Configuring the mode vote
+
+The vote for the next mode is [dot-vote](https://github.com/modcommunity/dot-vote), and the rules in `game/hungry_maps.gd` are only this game's defaults. A server owner overrides any of dot-vote's settings without touching code, in `user://cfg/hungry_vote.json`, then `DOT_VOTE_*`, then `--vote-*` — later wins. A file that does not validate is refused whole and the defaults stand, with the reason in the log.
+
+The end-of-mode vote and the option to extend the current mode:
+
+```json
+{ "end_vote": true, "vote_lead_sec": 120, "include_extend": true, "extend_seconds": 300, "max_extends": 2 }
+```
+
+`end_vote: false` turns the end-of-mode ballot off (the mode still ends, on the rotation); `include_extend: false` takes "extend" off the ballot; `extend_seconds` is how much one extension adds and `max_extends` how many there may be. Every setting is in dot-vote's README, and its `docs/parity.md` maps the long-standing community map-chooser plugins' settings onto them.
+
 ## Validating changes
 
 ```bash
