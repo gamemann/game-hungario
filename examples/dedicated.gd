@@ -943,7 +943,7 @@ func _test_live_tools() -> void:
 	_check(monster != null, "a player joins as a monster")
 
 	if monster == null:
-		for what in ["slay", "respawn", "give", "refusal", "rename"]:
+		for what in ["slay", "respawn", "give", "noclip", "freeze", "speed", "clean", "refusal", "rename"]:
 			_check(false, what)
 		_done()
 		return
@@ -966,8 +966,40 @@ func _test_live_tools() -> void:
 	_check(monster.carried.has(StringName(item)), "`give Chomp %s` puts it in their hands" % item,
 		" | ".join(given))
 
-	var refused := await _live("noclip Chomp")
-	_check(_said_any(refused, "rubber-band"), "`noclip` is refused, and says it would rubber-band",
+	# Noclip, freeze and speed are dot-2d's admin modifiers now: on the monster, and in every
+	# piece's replicated state, which is what the owning client predicts. `headless_net` is
+	# where the prediction itself is measured; this is the console reaching it.
+	var clipped := await _live("noclip Chomp")
+	_check(
+		Dot2DAdminModifiers.bits_noclip(monster.admin)
+			and monster.pieces.all(func(p: Variant) -> bool: return Dot2DAdminModifiers.is_noclipped(p.state)),
+		"`noclip Chomp` reaches the monster and every piece's state", " | ".join(clipped))
+
+	var held := await _live("freeze Chomp")
+	_check(
+		Dot2DAdminModifiers.bits_frozen(monster.admin)
+			and monster.pieces.all(func(p: Variant) -> bool: return Dot2DAdminModifiers.is_frozen(p.state)),
+		"`freeze Chomp` holds every piece", " | ".join(held))
+
+	var quick := await _live("speed Chomp 2.2")
+	_check(
+		is_equal_approx(Dot2DAdminModifiers.bits_speed(monster.admin), 2.0)
+			and _said_any(quick, "2×") and not _said_any(quick, "2.2"),
+		"`speed Chomp 2.2` lands on the 2x step, and says so", " | ".join(quick))
+
+	# A respawn is a new body: dot-moderation switches noclip and freeze off through the
+	# handlers, off HungryWorld.player_spawned. Without that hook the bits would ride the
+	# monster — which outlives its pieces — into the next life.
+	var _again := await _live("respawn Chomp")
+	_check(
+		not Dot2DAdminModifiers.bits_noclip(monster.admin)
+			and not Dot2DAdminModifiers.bits_frozen(monster.admin)
+			and monster.pieces.all(func(p: Variant) -> bool: return (p.state as Dot2DState).admin == 0),
+		"and a respawn arrives clean: no noclip, no freeze, normal speed",
+		str(Dot2DAdminModifiers.words(monster.admin)))
+
+	var refused := await _live("god Chomp")
+	_check(_said_any(refused, "being eaten"), "`god` is refused, and says being eaten is the game",
 		" | ".join(refused))
 
 	var _renamed := await _live("rename Chomp Nibbles")

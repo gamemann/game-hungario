@@ -7,6 +7,8 @@ const HungryField := preload("../game/hungry_field.gd")
 const HungryHazards := preload("../game/hungry_hazards.gd")
 const HungryHunters := preload("../game/hungry_hunters.gd")
 const HungryInterest := preload("../game/net/hungry_interest.gd")
+const HungryLayout := preload("../game/hungry_layout.gd")
+const HungryModTools := preload("../game/hungry_mod_tools.gd")
 const HungryNetBridge := preload("../game/net/hungry_net_bridge.gd")
 const HungryNetCommand := preload("../game/net/hungry_net_command.gd")
 const HungryPieceNet := preload("../game/net/hungry_piece_net.gd")
@@ -34,7 +36,7 @@ const SNAPSHOT_RATE := 20
 const SEED := 20260828
 const CLIENT_PEER := 2
 
-const CHECKS := 126
+const CHECKS := 135
 
 var _passed := 0
 var _failed := 0
@@ -75,6 +77,7 @@ func _run() -> void:
 		_test_handshake()
 		_test_replication()
 		_test_prediction()
+		_test_admin_is_predicted()
 		_test_field_replication()
 		_test_splitting_replicates()
 		_test_throw_replicates()
@@ -801,6 +804,163 @@ func _test_prediction() -> void:
 		"and stays with the server afterwards"
 	)
 	_done()
+
+
+## An administrator noclips and freezes a monster on the server, and the monster's own
+## client has to PREDICT both.
+##
+## [b]The symptom this exists for is rubber-banding, and no server-side check can see
+## it.[/b] So each window records, tick by tick, where the client predicted its monster and
+## where the server put it, and compares the two at the same tick — once the shipped way,
+## through the moderator handlers and [Dot2DAdminModifiers], and once the naive way, a
+## server-only change the client is never told about. The naive half has to DIVERGE: a
+## window in which the client was never asked to disagree would pass the first half too.
+## Game-arena's `headless_net` is the same shape for the first-person motor.
+func _test_admin_is_predicted() -> void:
+	_section("an admin's noclip and freeze, predicted by the client they happen to")
+
+	var server_fn := func() -> HungryWorld: return _server_world
+	var tools := HungryModTools.handlers(server_fn)
+	var noclip: Callable = tools[DotModTools.ACTION_NOCLIP]
+	var freeze: Callable = tools[DotModTools.ACTION_FREEZE]
+
+	# A rock on the monster's path, in BOTH worlds — the client predicts around the level's
+	# rocks, which is the whole reason a server-only noclip would disagree with it.
+	var from := _server_world.monster_for(7).centre()
+	var heading := (_server_world.arena.bounds.get_center() - from)
+	heading = heading.normalized() if heading.length() > 400.0 else Vector2.RIGHT
+	var rock := from + heading * 140.0
+	_server_world.layout = _rock_at(rock)
+	_client_world.layout = _rock_at(rock)
+
+	var command := Dot2DCommand.new()
+	command.aim = heading
+	command.reach = 900.0
+
+	var on: DotResult = noclip.call(&"7", {"on": true})
+	_check(on.ok, "the moderator handler noclips player 7 on the server", str(on.error))
+
+	var shipped := _admin_window(90, command)
+
+	var client_piece := _client_world.monster_for(7).rider_piece()
+	_check(
+		client_piece != null and Dot2DAdminModifiers.is_noclipped(client_piece.state),
+		"the client learned it from the snapshots"
+	)
+	# Past the rock's CENTRE, which a monster the rock stopped can never reach: it is held
+	# the rock's radius plus its own short of it.
+	var past := (_server_world.monster_for(7).centre() - rock).dot(heading)
+	_check(past > 0.0, "the server's monster went through the rock", "%.1f units past its centre" % past)
+	_check(
+		float(shipped["worst"]) < 8.0,
+		"and the client predicted it through, never more than eight units from the server",
+		"worst %.2f" % float(shipped["worst"])
+	)
+
+	# The same move made the naive way: noclip off, and the rock taken out of the SERVER's
+	# world only — a server that lets somebody through without telling the client why.
+	var _off: DotResult = noclip.call(&"7", {"on": false})
+	_back_to(from)
+	_server_world.layout = HungryLayout.none()
+	var naive := _admin_window(90, command)
+	print("  measured: noclip shipped worst %.2f (%d ticks over 8); naive worst %.2f (%d ticks over 8)" % [
+		float(shipped["worst"]), int(shipped["over"]), float(naive["worst"]), int(naive["over"])
+	])
+	_check(
+		float(naive["worst"]) > 30.0,
+		"a server-only noclip is one the client does not predict: the rubber band",
+		"naive worst %.2f — if this passes quietly, the checks above prove nothing" % float(naive["worst"])
+	)
+
+	_server_world.layout = HungryLayout.none()
+	_client_world.layout = HungryLayout.none()
+	_back_to(from)
+
+	# Freeze: held still with the pointer at full reach, on both ends.
+	var frozen: DotResult = freeze.call(&"7", {"on": true})
+	_check(frozen.ok, "the moderator handler freezes player 7", str(frozen.error))
+	var held_at := _server_world.monster_for(7).centre()
+	var still := _admin_window(60, command)
+	_check(
+		_server_world.monster_for(7).centre().distance_to(held_at) < 1.0,
+		"the server holds the monster where it was",
+		"%.2f units" % _server_world.monster_for(7).centre().distance_to(held_at)
+	)
+	_check(
+		float(still["worst"]) < 1.0,
+		"and the client never predicted it moving",
+		"worst %.2f" % float(still["worst"])
+	)
+
+	# And naive: unfrozen, with the server alone refusing to move anybody.
+	#
+	# Measured, this is worse than a rubber band: the client walks away and is NEVER pulled
+	# back, because a snapshot carries an entity only when it changed against the acked
+	# baseline, a server that holds somebody still has nothing new to say, and
+	# [DotNetPredictor] reconciles only what a snapshot carries. The shipped freeze does
+	# not meet it — the admin bit changing is what reaches the client — but it is why this
+	# control diverges without limit rather than by a few ticks' worth.
+	var _thaw: DotResult = freeze.call(&"7", {"on": false})
+	var speed := _server_world.tunables.max_speed
+	_server_world.tunables.max_speed = 0.0
+	var naive_freeze := _admin_window(60, command)
+	_server_world.tunables.max_speed = speed
+	print("  measured: freeze shipped worst %.2f; naive worst %.2f (%d ticks over 8)" % [
+		float(still["worst"]), float(naive_freeze["worst"]), int(naive_freeze["over"])
+	])
+	_check(
+		float(naive_freeze["worst"]) > 8.0,
+		"a server-only freeze is one the client walks out of",
+		"naive worst %.2f" % float(naive_freeze["worst"])
+	)
+
+	_back_to(from)
+	_done()
+
+
+func _rock_at(at: Vector2) -> HungryLayout:
+	var layout := HungryLayout.none()
+	layout.blocks = PackedVector3Array([Vector3(at.x, at.y, 40.0)])
+	return layout
+
+
+## Puts monster 7 back at [param at] on the server and lets both ends settle, so the next
+## window starts from agreement rather than from the last one's disagreement.
+func _back_to(at: Vector2) -> void:
+	for piece in _server_world.monster_for(7).pieces:
+		piece.state.position = at
+		piece.state.velocity = Vector2.ZERO
+	_steps(20)
+
+
+## [param ticks] more ticks holding [param command], comparing where the client predicted
+## its monster at each tick with where the server had it at the SAME tick:
+## `{worst, over}`, the second counting ticks more than eight units apart.
+func _admin_window(ticks: int, command: Dot2DCommand) -> Dictionary:
+	var client_at := {}
+	var server_at := {}
+
+	for _i in range(ticks):
+		_tick += 1
+		_server_bridge.server_tick(_tick)
+		server_at[_tick] = _server_world.monster_for(7).centre()
+		_flush()
+		_client_bridge.client_tick(_tick + INPUT_LEAD, command)
+		client_at[_tick + INPUT_LEAD] = _client_world.monster_for(7).centre()
+		_flush()
+
+	var worst := 0.0
+	var over := 0
+
+	for tick: int in server_at:
+		if not client_at.has(tick):
+			continue
+		var gap: float = (client_at[tick] as Vector2).distance_to(server_at[tick] as Vector2)
+		worst = maxf(worst, gap)
+		if gap > 8.0:
+			over += 1
+
+	return {"worst": worst, "over": over}
 
 
 func _test_field_replication() -> void:

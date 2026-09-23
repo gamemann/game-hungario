@@ -2,6 +2,7 @@ extends Node
 
 const HungryClient := preload("../game/client/hungry_client.gd")
 const HungryContent := preload("../game/hungry_content.gd")
+const HungryLayout := preload("../game/hungry_layout.gd")
 const HungryModule := preload("../game/hungry_module.gd")
 const HungryNetLink := preload("../game/net/hungry_net_link.gd")
 const HungryServices := preload("../game/hungry_services.gd")
@@ -103,6 +104,7 @@ func _run() -> void:
 		if joined:
 			await _test_client_scene()
 			await _test_playing()
+			await _test_admin_over_the_socket()
 			await _test_chat()
 			await _test_two_players()
 			await _test_game_change()
@@ -587,6 +589,88 @@ func _test_playing() -> void:
 
 	await _test_mass_actions_are_heard(module, mine)
 
+	_command = Dot2DCommand.new()
+	_done()
+
+
+## An admin's noclip and freeze, over a real socket, on the player's own predicted monster.
+##
+## `headless_net` is where this is PROVED — tick by tick, with a naive control that has to
+## diverge, over a loopback that behaves the same way twice. What only a socket reaches is
+## the rest of the path: the console's tools on a live module, the bit riding a real
+## snapshot to a real client, and a prediction that holds while RPC timing does whatever it
+## does. The tolerance is the one "playing" already uses for agreement; a server-only
+## noclip through this rock measures about 80 on the loopback.
+func _test_admin_over_the_socket() -> void:
+	_section("an admin's noclip and freeze, over the socket")
+
+	var module := _module()
+	var mine := _client.bridge.local_player_id
+	var id := StringName(str(mine))
+	var server_monster := module.world.monster_for(mine)
+	var client_monster := _client.world.monster_for(mine)
+
+	if server_monster == null or client_monster == null or server_monster.piece_count() == 0:
+		for what in ["noclip", "learned", "through", "agreed", "freeze", "held", "held client"]:
+			_check(false, what, "no monster to act on")
+		_done()
+		return
+
+	# A rock across the path, in both worlds: the client predicts around rocks, which is
+	# what a noclip it did not know about would disagree with.
+	var from := server_monster.centre()
+	var heading := (module.world.arena.bounds.get_center() - from)
+	heading = heading.normalized() if heading.length() > 400.0 else Vector2.RIGHT
+	var rock := from + heading * 160.0
+	var layout := HungryLayout.none()
+	layout.blocks = PackedVector3Array([Vector3(rock.x, rock.y, 40.0)])
+	var kept_server := module.world.layout
+	var kept_client := _client.world.layout
+	module.world.layout = layout
+	_client.world.layout = layout
+
+	var on: DotResult = await module.mod_tools.toggle(&"console", id, DotModTools.ACTION_NOCLIP, true, 100)
+	_check(on.ok, "the server's tools noclip the player", str(on.error))
+
+	var learned := await _until(func() -> bool:
+		var piece := client_monster.rider_piece()
+		return piece != null and Dot2DAdminModifiers.is_noclipped(piece.state)
+	, 5.0)
+	_check(learned, "and the client learns it from a snapshot")
+
+	_command = Dot2DCommand.new()
+	_command.aim = heading
+	_command.reach = 900.0
+
+	var worst := [0.0]
+	var through := await _until(func() -> bool:
+		worst[0] = maxf(worst[0], client_monster.centre().distance_to(server_monster.centre()))
+		return (server_monster.centre() - rock).dot(heading) > 40.0
+	, 10.0)
+	_check(through, "the server's monster goes through the rock",
+		"%.1f past its centre" % (server_monster.centre() - rock).dot(heading))
+	_check(worst[0] < 60.0, "and the client stays with it the whole way (worst %.1f units apart)" % worst[0])
+
+	var _off: DotResult = await module.mod_tools.toggle(&"console", id, DotModTools.ACTION_NOCLIP, false, 100)
+	module.world.layout = kept_server
+	_client.world.layout = kept_client
+
+	# Freeze with the pointer still held at full reach.
+	var frozen: DotResult = await module.mod_tools.toggle(&"console", id, DotModTools.ACTION_FREEZE, true, 100)
+	_check(frozen.ok, "the server's tools freeze the player", str(frozen.error))
+	var _told := await _until(func() -> bool:
+		var piece := client_monster.rider_piece()
+		return piece != null and Dot2DAdminModifiers.is_frozen(piece.state)
+	, 5.0)
+	var server_at := server_monster.centre()
+	var client_at := client_monster.centre()
+	await _frames(60)
+	_check(server_monster.centre().distance_to(server_at) < 1.0,
+		"the server holds the monster still under a held pointer (%.2f units)" % server_monster.centre().distance_to(server_at))
+	_check(client_monster.centre().distance_to(client_at) < 1.0,
+		"and the client predicts it held too (%.2f units)" % client_monster.centre().distance_to(client_at))
+
+	var _thaw: DotResult = await module.mod_tools.toggle(&"console", id, DotModTools.ACTION_FREEZE, false, 100)
 	_command = Dot2DCommand.new()
 	_done()
 

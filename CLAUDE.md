@@ -19,7 +19,13 @@ all.)*
 
 dot-moderation's live tools are here (`HungryModTools`, built in the module because a game change replaces the world under it), and **only what a server can do to a monster on its own is supported**: slay (every piece devoured — the world's own death), respawn (the queue cancelled first), give and strip an item, rename, and bring, goto, send and return, which move every piece by one offset so a split monster arrives in its own shape.
 
-The rest is refused with a reason `modtools` prints, and the one worth reading is **noclip, freeze and speed: `Dot2DMotor` carries no admin modifiers in its replicated state**, where dot-player-controller's first-person motor does. A server that changed how a monster moves without the owning client knowing would have that client predict something else and be corrected on every snapshot — rubber-banding. Adding modifiers to dot-2d the way the first-person motor has them is the way in; it is not done here. God and buddha are refused because being eaten is the game, and health and slap because a monster has mass, not health.
+**Noclip, freeze and speed change how a monster moves, so they go through the state the client predicts**: dot-2d's `Dot2DAdminModifiers`, kept per monster in `HungryMonster.admin` (authority-only, like `effects`) and written into every piece's `Dot2DState.admin` each tick, which `HungryPieceNet` replicates as `net_admin`. A server that changed how a monster moves without the owning client knowing would have that client predict something else and be corrected on every snapshot — rubber-banding — and `headless_net` keeps that as a negative control: a forced noclip through a rock stays within 2 units of the server for 90 ticks, and the same move with the rock removed from the server's world only is 82 units out. Noclip is the rocks not being there (`block_piece` skips them, inside the function a client's replay runs) and not the arena's edge; a freeze also refuses a split, a throw and an eject, which are movement by another route. `sandbox` repeats both over a real socket.
+
+**A spawn tells dot-moderation**, off `HungryWorld.player_spawned` (`_watch_spawns`, re-wired on a game change), so a respawn switches noclip and freeze off through the handlers. The bits live on the monster, which outlives its pieces; without the hook they would ride it into the next life.
+
+**Found on the way, and not fixed here:** a snapshot carries an entity only when it changed against the acked baseline, and `DotNetPredictor` reconciles only what a snapshot carries — so a predicted piece whose server state stands still is never corrected. The naive freeze control shows it: the client walks 113 units away and is never pulled back. The shipped freeze does not meet it, because the admin bit changing is what reaches the client.
+
+The rest is refused with a reason `modtools` prints. Gravity, because a top-down arena has none. God and buddha because being eaten is the game, and health and slap because a monster has mass, not health.
 
 ## Why this project exists
 
@@ -676,14 +682,14 @@ done
 
 godot --headless --path . res://examples/headless_round.tscn   # 286 — the game
 godot --headless --path . res://examples/headless_stack.tscn   #  24 checks
-godot --headless --path . res://examples/headless_net.tscn     # 126 — the netcode
-godot --headless --path . res://examples/dedicated.tscn        # 176 — a real DotServer
-godot --headless --path . res://examples/sandbox.tscn          #  84 — two real clients
+godot --headless --path . res://examples/headless_net.tscn     # 135 — the netcode
+godot --headless --path . res://examples/dedicated.tscn        # 180 — a real DotServer
+godot --headless --path . res://examples/sandbox.tscn          #  91 — two real clients
 godot --headless --path . res://examples/content.tscn          #  46 — the cloud path
 godot --headless --path . res://examples/headless_presentation.tscn  # 48 — the client half
 ```
 
-783 checks across seven suites. Add `-- --verbose` to `dedicated`, `sandbox` or `content` when one fails and
+810 checks across seven suites. Add `-- --verbose` to `dedicated`, `sandbox` or `content` when one fails and
 the reason is in a log line rather than in the assertion.
 
 **Run `headless_round` after any change to dot-2d** and **`headless_net` after any change

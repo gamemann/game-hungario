@@ -674,6 +674,7 @@ func attach_piece(
 
 	if is_authority:
 		monster.flags = monster.effect_flags(_tick)
+		Dot2DAdminModifiers.adopt(piece.state, monster.admin)
 
 	_apply_flags(monster, piece)
 
@@ -890,6 +891,12 @@ func block_piece(piece: HungryPiece) -> bool:
 	if piece == null or layout == null or layout.is_empty():
 		return false
 
+	# An administrator's noclip is the rocks not being there. Here, and not around the
+	# call, because this is the function a client's replay runs: skipped on the server
+	# only, every tick inside a rock is a correction back out of it.
+	if Dot2DAdminModifiers.is_noclipped(piece.state):
+		return false
+
 	return layout.resolve_circle(piece.state, piece.radius())
 
 
@@ -999,7 +1006,10 @@ func _simulate_monsters(commands: Dictionary, delta: float) -> void:
 			# crash, it is a player who moves forty times as fast as everyone else.
 			command.sanitise(1200.0)
 
-		if is_authority:
+		# An administrator's freeze holds the whole monster, and a split, a throw or an
+		# eject is movement by another route: a frozen player who could split would cross
+		# the arena half a body at a time.
+		if is_authority and not Dot2DAdminModifiers.bits_frozen(monster.admin):
 			if command.just_pressed(Dot2DCommand.BUTTON_SPLIT, monster.last_command):
 				_split(monster, command)
 
@@ -1016,6 +1026,13 @@ func _simulate_monsters(commands: Dictionary, delta: float) -> void:
 		var pointer := pointer_of(monster, command)
 
 		for piece in monster.pieces:
+			# The monster's admin bits into every piece, every tick, on the authority only.
+			# A split made this tick has to be frozen or noclipped with the rest; a client
+			# has no monster-level value to write and takes each piece's off the wire, which
+			# is what its prediction replays.
+			if is_authority:
+				Dot2DAdminModifiers.adopt(piece.state, monster.admin)
+
 			motor.simulate(
 				piece.state, command_for_piece(command, piece, pointer), delta, _tick
 			)

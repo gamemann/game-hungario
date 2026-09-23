@@ -287,6 +287,8 @@ func _module_game_changed(content_key: String) -> void:
 	if services != null:
 		services.world = world
 
+	_watch_spawns(world)
+
 	if combat != null:
 		world.damage_gate = combat.gate
 
@@ -402,12 +404,33 @@ func _build_mod_tools() -> void:
 
 	add_child(mod_tools)
 
+	_watch_spawns(world)
+
 	mod_commands = DotModToolCommands.install(self, mod_tools, server)
 	mod_commands.alive_fn = func(id: StringName) -> bool:
 		var monster := world.monster_for(String(id).to_int()) if world != null else null
 		return monster != null and monster.alive
 	mod_commands.items_fn = func() -> PackedStringArray:
 		return HungryModTools.item_ids(world_fn)
+
+
+## A spawn is a new body, and dot-moderation has to be told: it switches noclip and freeze
+## off through the handlers and keeps what persists (god, buddha). Without this an admin's
+## noclip would ride a monster through its death into the next life — the bits live on
+## [HungryMonster], which outlives its pieces — where every other game starts a new body
+## clean. Arena does this from its own spawn path; this game's spawn path is
+## [signal HungryWorld.player_spawned].
+func _watch_spawns(target: HungryWorld) -> void:
+	if target == null or mod_tools == null:
+		return
+
+	if not target.player_spawned.is_connected(_on_player_spawned_for_tools):
+		target.player_spawned.connect(_on_player_spawned_for_tools)
+
+
+func _on_player_spawned_for_tools(player_id: int) -> void:
+	if mod_tools != null:
+		mod_tools.respawned(StringName(str(player_id)))
 
 
 func _build_combat() -> DotResult:

@@ -139,11 +139,11 @@ The end-of-mode vote and the option to extend the current mode:
 ## Validating changes
 
 ```bash
-godot --headless --path . res://examples/headless_round.tscn   # 186 checks, the game
-godot --headless --path . res://examples/headless_net.tscn     # 107 checks, the netcode
-godot --headless --path . res://examples/dedicated.tscn        # 176 checks, a real DotServer
-godot --headless --path . res://examples/sandbox.tscn          #  68 checks, two real clients
-godot --headless --path . res://examples/content.tscn          #  45 checks, the cloud path
+godot --headless --path . res://examples/headless_round.tscn   # 286 checks, the game
+godot --headless --path . res://examples/headless_net.tscn     # 135 checks, the netcode
+godot --headless --path . res://examples/dedicated.tscn        # 180 checks, a real DotServer
+godot --headless --path . res://examples/sandbox.tscn          #  91 checks, two real clients
+godot --headless --path . res://examples/content.tscn          #  46 checks, the cloud path
 ```
 
 Each exits non-zero on failure. See [CLAUDE.md](CLAUDE.md) for the setup and for what each one is actually checking.

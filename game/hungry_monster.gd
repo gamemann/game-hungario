@@ -98,6 +98,15 @@ var effects: Dictionary = {}
 ## [method HungryWorld._sync_flags].
 var flags: int = 0
 
+## An administrator's noclip, freeze and speed step, as [Dot2DAdminModifiers] bits.
+##
+## [b]Authority-only, like [member effects].[/b] The world writes it into every piece's
+## [member Dot2DState.admin] each tick, and that per-piece copy is what replicates and what
+## a client's prediction reads. One value per monster because an admin acts on a player,
+## and a player who has split is still one player: a freeze that held one half would not
+## be a freeze.
+var admin: int = 0
+
 ## Peak mass this life, for the scoreboard.
 var best_mass: float = 0.0
 
@@ -342,6 +351,7 @@ func describe() -> Dictionary:
 		"carried": carried_names(),
 		"effects": effects.size(),
 		"flags": flags,
+		"admin": Dot2DAdminModifiers.words(admin),
 		"trait": String(trait_id),
 		"starter": String(starter_item()),
 		"food": food_eaten,

@@ -8,14 +8,17 @@ const HungryMonster := preload("hungry_monster.gd")
 ## [b]The subset is the honest one, and every refusal says why.[/b] What this game can do
 ## to a monster on the server alone, with the client simply following the snapshot, it
 ## does: put somebody back at a safe spawn, remove them from the round, move them, hand
-## them an item, rename them. What it refuses is refused for a reason about the wire or the
+## them an item, rename them. What changes how a monster MOVES it does through the state
+## the client predicts. What it refuses is refused for a reason about the wire or the
 ## design, and `modtools` prints each:
 ##
-## - [b]noclip, freeze, speed and gravity[/b] would be server-only changes to a PREDICTED
-##   2D motor. dot-player-controller's first-person motor carries admin modifiers in its
-##   replicated state so its clients predict them; `Dot2DMotor` has no such field, and a
-##   server that moved a monster the owning client does not know about would rubber-band
-##   it. Adding them there is the way in, and is not done here.
+## - [b]noclip, freeze and speed[/b] are dot-2d's [Dot2DAdminModifiers], kept per monster
+##   in [member HungryMonster.admin] and written into every piece's replicated state, so
+##   the owning client predicts them — `headless_net` holds a forced noclip through a rock
+##   for a whole window without a correction, and shows the same move made the naive way
+##   (skipping the rocks on the server only) being corrected. Noclip is the rocks not being
+##   there, not the arena's edge; a freeze also stops a split, a throw and an eject.
+## - [b]gravity[/b], because there is none in a top-down arena.
 ## - [b]god and buddha[/b], because being eaten is the whole game: a monster nothing can
 ##   eat breaks every round it is in rather than protecting one player.
 ## - [b]health and slap[/b], because a monster has mass, not health, and there is nothing
@@ -26,6 +29,34 @@ const HungryMonster := preload("hungry_monster.gd")
 
 static func handlers(world_fn: Callable) -> Dictionary:
 	return {
+		DotModTools.ACTION_NOCLIP: func(id: StringName, args: Dictionary) -> DotResult:
+			var monster := _monster(world_fn.call(), id)
+			if monster == null:
+				return _absent(id)
+			var on := bool(args["on"])
+			_set_admin(monster, Dot2DAdminModifiers.noclip_bits(monster.admin, on))
+			return DotResult.success(on),
+
+		DotModTools.ACTION_FREEZE: func(id: StringName, args: Dictionary) -> DotResult:
+			var monster := _monster(world_fn.call(), id)
+			if monster == null:
+				return _absent(id)
+			var on := bool(args["on"])
+			_set_admin(monster, Dot2DAdminModifiers.frozen_bits(monster.admin, on))
+			return DotResult.success(on),
+
+		DotModTools.ACTION_SPEED: func(id: StringName, args: Dictionary) -> DotResult:
+			var monster := _monster(world_fn.call(), id)
+			if monster == null:
+				return _absent(id)
+			var scale := float(args["scale"])
+			if scale <= 0.0:
+				return DotResult.fail(DotError.CODE_INVALID, "A multiplier has to be above zero.")
+			_set_admin(monster, Dot2DAdminModifiers.speed_bits(monster.admin, scale))
+			# The step it landed on, which is what the admin is told: speeds are a ladder
+			# because only an index travels.
+			return DotResult.success(Dot2DAdminModifiers.bits_speed(monster.admin)),
+
 		DotModTools.ACTION_SLAY: func(id: StringName, _args: Dictionary) -> DotResult:
 			var world: HungryWorld = world_fn.call()
 			var monster := _monster(world, id)
@@ -82,11 +113,7 @@ static func handlers(world_fn: Callable) -> Dictionary:
 
 
 static func unsupported() -> Dictionary:
-	var prediction := "the 2D motor carries no admin modifiers a client could predict, so it would rubber-band"
 	return {
-		DotModTools.ACTION_NOCLIP: prediction,
-		DotModTools.ACTION_FREEZE: prediction,
-		DotModTools.ACTION_SPEED: prediction,
 		DotModTools.ACTION_GRAVITY: "there is no gravity in a top-down arena",
 		DotModTools.ACTION_GOD: "being eaten is the game; a monster nothing can eat breaks the round",
 		DotModTools.ACTION_BUDDHA: "being eaten is the game; a monster nothing can eat breaks the round",
@@ -126,6 +153,15 @@ static func teleport(world_fn: Callable, id: StringName, to: Variant) -> void:
 	for piece in monster.pieces:
 		piece.state.position += offset
 		piece.state.velocity = Vector2.ZERO
+
+
+## The monster's value, and every piece it has now — not only at the next tick, so the
+## snapshot that goes out before it already carries the change.
+static func _set_admin(monster: HungryMonster, bits: int) -> void:
+	monster.admin = bits
+
+	for piece in monster.pieces:
+		Dot2DAdminModifiers.adopt(piece.state, bits)
 
 
 static func _monster(world: HungryWorld, id: StringName) -> HungryMonster:

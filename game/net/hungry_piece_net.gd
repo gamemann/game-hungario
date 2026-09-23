@@ -28,6 +28,7 @@ var net_position: Vector2 = Vector2.ZERO
 var net_velocity: Vector2 = Vector2.ZERO
 var net_mass: int = 0
 var net_flags: int = 0
+var net_admin: int = 0
 
 ## Newest tick whose state this behaviour has adopted. Client side, for reconciliation.
 var last_state_tick: int = -1
@@ -203,5 +204,6 @@ func describe() -> Dictionary:
 		"position": net_position,
 		"mass": net_mass,
 		"flags": net_flags,
+		"admin": net_admin,
 		"state_tick": last_state_tick,
 	}
