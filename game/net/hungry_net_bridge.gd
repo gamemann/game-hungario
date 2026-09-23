@@ -49,6 +49,14 @@ const BOARD_INTERVAL_TICKS := 30
 ## The client has been told who it is and what the world is.
 signal hello_received(player_id: int)
 
+## A peer said it can receive, for the first time on this connection. Server side.
+##
+## The moment anything a join owes somebody can be sent — the chat backlog, the join
+## notice, the hunters and the hazards already standing in the arena. dot-server's
+## `client_spawn` is too early for all of them, because the client builds its scene only
+## after signon and has nowhere for an RPC to land until it says so.
+signal peer_admitted(peer_id: int, player_id: int)
+
 ## A player joined or left, or their avatar changed.
 signal roster_changed(player_id: int)
 
@@ -518,6 +526,7 @@ func _admit(peer_id: int, player_id: int) -> void:
 	if peer_id <= 0:
 		return
 
+	var first := not _ready_peers.has(peer_id)
 	_ready_peers[peer_id] = true
 
 	if not net.peers().has(peer_id):
@@ -527,6 +536,9 @@ func _admit(peer_id: int, player_id: int) -> void:
 	_send_roster(peer_id)
 	_send_full_field(peer_id)
 	send_carry(player_id)
+
+	if first:
+		peer_admitted.emit(peer_id, player_id)
 
 
 # --- Membership ------------------------------------------------------------
@@ -583,7 +595,6 @@ func remove_peer(peer_id: int) -> void:
 		return
 
 	var session_id := int(_player_of_peer[peer_id])
-	var was_ready := _ready_peers.has(peer_id)
 	_player_of_peer.erase(peer_id)
 	_peer_of_player.erase(session_id)
 	_ready_peers.erase(peer_id)
@@ -607,7 +618,14 @@ func remove_peer(peer_id: int) -> void:
 		live.remove_player(session_id)
 
 	if net != null:
-		if was_ready:
+		# [b]Asked of the manager, not of `_ready_peers`.[/b] A real disconnect calls
+		# [method mark_not_ready] first, so by the time it gets here the ready set no longer
+		# has the peer — and gating on it skipped this on every disconnect there was. The
+		# manager kept the peer, built it a snapshot every interval and sent it to a socket
+		# that had gone: "Attempt to call RPC with unknown peer ID", once per snapshot, for
+		# the life of the server. `_admit` is the only place a peer joins the manager, so
+		# the manager's own list is the one that says whether there is anything to release.
+		if net.peers().has(peer_id):
 			# Releases the peer's remaining entities, its input buffer and its
 			# acknowledgement record in one place, so nothing is left keyed by a peer id
 			# the next player to connect will be given.

@@ -5,6 +5,7 @@ const HungryContent := preload("../game/hungry_content.gd")
 const HungryModule := preload("../game/hungry_module.gd")
 const HungryNetLink := preload("../game/net/hungry_net_link.gd")
 const HungryServices := preload("../game/hungry_services.gd")
+const HungrySoundSink := preload("../game/client/hungry_sound_sink.gd")
 
 ## A real server and a real client, one process, over a real socket, playing the game.
 ##
@@ -584,8 +585,61 @@ func _test_playing() -> void:
 		"under the rider schema"
 	)
 
+	await _test_mass_actions_are_heard(module, mine)
+
 	_command = Dot2DCommand.new()
 	_done()
+
+
+## Split and eject make a noise, over the network, and only when they happened.
+##
+## Both voices were baked and catalogued from the first commit and nothing ever played
+## either. Heard by watching the mirrored monster, so this has to be a netted client: the
+## pieces a split makes arrive as entity spawns, and the halved mass as a snapshot.
+func _test_mass_actions_are_heard(module: HungryModule, mine: int) -> void:
+	var sink := _client.presentation.audio.sink as HungrySoundSink
+
+	if not _check(sink != null, "the client's sound goes through this game's sink"):
+		return
+
+	# Big enough to split, and each half big enough to eject from.
+	module.world.feed_player(mine, 400.0)
+	var grown := await _until(func() -> bool:
+		var monster := _client.world.monster_for(mine)
+		return monster != null and monster.mass() > 300.0
+	, 6.0)
+	_check(grown, "the client sees its monster grow")
+
+	# Nothing pressed, nothing heard: growing is eating, not splitting.
+	_check(sink.count_of(&"split") == 0, "growing is not heard as a split")
+
+	# Eject first, while there is one piece, pointing just past its own centre: near is
+	# slow, so the monster does not walk onto the blob it spat out and eat it back inside
+	# the same snapshot — which nets to nothing and is correctly not heard.
+	_command = Dot2DCommand.new()
+	_command.aim = Vector2.UP
+	_command.reach = 4.0
+	_command.set_button(Dot2DCommand.BUTTON_EJECT, true)
+
+	var ejected := await _until(func() -> bool: return sink.count_of(&"eject") > 0, 4.0)
+	_check(ejected, "an eject is heard (%s)" % ", ".join(sink.played_ids()))
+
+	_command = Dot2DCommand.new()
+	await _frames(3)
+	_command.aim = Vector2.LEFT
+	_command.reach = 400.0
+	_command.set_button(Dot2DCommand.BUTTON_SPLIT, true)
+
+	var split := await _until(func() -> bool:
+		var monster := _client.world.monster_for(mine)
+		return monster != null and monster.piece_count() > 1
+	, 6.0)
+	await _frames(3)
+	_check(split, "a split reaches the client")
+	_check(
+		sink.count_of(&"split") > 0,
+		"and so is a split (%s)" % ", ".join(sink.played_ids())
+	)
 
 
 func _test_chat() -> void:
@@ -783,6 +837,27 @@ func _test_two_players() -> void:
 	_check(sees_them, "the first client sees the second")
 	_check(sees_us, "and the second sees the first")
 
+	# What a join owes: an announcement to everybody already here, and the backlog to the
+	# one who just arrived. Both used to be sent from `client_spawn`, which is before the
+	# client has built anything to receive them on — so neither ever went, and with
+	# dot-server's own join line turned off in favour of dot-chat's there was no join line
+	# at all. Every check above passed throughout.
+	var announced := await _until(func() -> bool:
+		for message: DotChatMessage in _heard:
+			if message.kind == DotChatMessage.Kind.JOIN:
+				return true
+		return false
+	, 6.0)
+	_check(announced, "the first client is told somebody joined")
+
+	var caught_up := await _until(func() -> bool:
+		for message: DotChatMessage in _other.chat.history.recent_all(50):
+			if message.text.contains("hello from the sandbox"):
+				return true
+		return false
+	, 6.0)
+	_check(caught_up, "and the second is handed what was said before it arrived")
+
 	var module := _module()
 
 	# And the positions agree. This is the whole of "two people are in the same world":
@@ -859,6 +934,7 @@ func _test_two_players() -> void:
 
 	# Leaving has to be visible too: a monster left behind by a player who is gone is one
 	# everybody else can still be eaten by.
+	var their_peer := module.bridge.peer_for_player(theirs)
 	_other_link.disconnect_from_server("done")
 
 	var forgotten := await _until(func() -> bool:
@@ -869,6 +945,14 @@ func _test_two_players() -> void:
 	_check(
 		module.world.monster_for(theirs) == null,
 		"and the server drops them too"
+	)
+	# And so does its netcode. A disconnect takes the peer off the ready set before it
+	# removes it, and the removal used to be gated on the ready set — so the manager kept
+	# the peer and sent it a snapshot every interval, each one an "unknown peer ID" error
+	# in the server's log, while every check above passed.
+	_check(
+		their_peer > 0 and not module.bridge.net.peers().has(their_peer),
+		"and so does its netcode (peers %s)" % str(module.bridge.net.peers())
 	)
 
 	_other = null

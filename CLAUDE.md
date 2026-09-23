@@ -610,6 +610,10 @@ Every one of these parsed cleanly and none produced an error.
   `headless_round` never noticed because it never validated a schema.
 - **A bot registered as peer 0.** Two separate failure modes from one line.
 - **A section that aborted took eight checks with it.** See above.
+- **A disconnect never left the netcode.** `_on_client_disconnected` takes the peer off the ready set first, so nothing is announced to a socket that has gone — and `HungryNetBridge.remove_peer` then gated `net.remove_peer` on that same ready set, so it never ran. The manager kept the peer and sent it a snapshot every interval for the life of the server, each one an "Attempt to call RPC with unknown peer ID". `remove_peer` asks the manager now, and `sandbox` asserts the peer is gone from it.
+- **Nobody was ever welcomed.** `HungryModule._welcome` — the chat backlog, dot-chat's join notice, and the hunters and hazards already in the arena — was called from `client_spawn` and returned on its first line unless the peer was ready, which at `client_spawn` it never is. With dot-server's own join line switched off in favour of dot-chat's, nobody's arrival was announced at all. It runs from `HungryNetBridge.peer_admitted` now, and `sandbox` asserts both the notice and the backlog.
+- **Every rider built from content was drawn under its own monster.** `HungryRider` set a part's `z_index` to `layer - 50`, relative to a renderer that draws the discs on its own canvas, so the body sat at -20 beneath the disc it rides. The drawn fallback was unaffected, which made real content the one version nobody could see. Found by a rendered frame; `content` asserts the order now.
+- **Split and eject were silent.** Both voices were baked and catalogued from the first commit and nothing played either; a netted split also played an eating blip, because the new piece's mass arrived before its parent's halving did. `HungryClient._watch_mass` hears both now, only after the player pressed the key, and `sandbox` drives them over the socket. A netted client also heard every throw on the map as its own, which offline never did.
 
 **In other projects, none of them reachable from that project's own suite:**
 
@@ -657,12 +661,12 @@ godot --headless --path . res://examples/headless_round.tscn   # 266 — the gam
 godot --headless --path . res://examples/headless_stack.tscn   #  24 checks
 godot --headless --path . res://examples/headless_net.tscn     # 126 — the netcode
 godot --headless --path . res://examples/dedicated.tscn        # 167 — a real DotServer
-godot --headless --path . res://examples/sandbox.tscn          #  74 — two real clients
-godot --headless --path . res://examples/content.tscn          #  45 — the cloud path
+godot --headless --path . res://examples/sandbox.tscn          #  83 — two real clients
+godot --headless --path . res://examples/content.tscn          #  46 — the cloud path
 godot --headless --path . res://examples/headless_presentation.tscn  # 48 — the client half
 ```
 
-750 checks across seven suites. Add `-- --verbose` to `dedicated`, `sandbox` or `content` when one fails and
+760 checks across seven suites. Add `-- --verbose` to `dedicated`, `sandbox` or `content` when one fails and
 the reason is in a log line rather than in the assertion.
 
 **Run `headless_round` after any change to dot-2d** and **`headless_net` after any change

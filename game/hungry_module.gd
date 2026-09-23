@@ -159,6 +159,9 @@ func _module_load() -> DotResult:
 	hook_post("client_spawn", _on_client_spawn)
 	server.client_disconnected.connect(_on_client_disconnected)
 
+	if not bridge.peer_admitted.is_connected(_on_peer_admitted):
+		bridge.peer_admitted.connect(_on_peer_admitted)
+
 	# [b]dot-server's own chat is cancelled here rather than listened to.[/b]
 	# [DotChatRouter] has the rules now — channels, a radius, a backlog, a `/me`, and a
 	# gag that survives a reconnect — and the one thing that must not happen is both
@@ -865,6 +868,20 @@ func _on_client_spawn(event: DotEvent) -> void:
 
 	if progress != null:
 		progress.begin(str(_stat_keys.get(session.userid, "")))
+
+	# The welcome is NOT sent from here. `client_spawn` is the end of signon, and the
+	# client builds its scene only after it — so at this point the peer is never ready,
+	# `_welcome` returned on its first line for every player there has ever been, and
+	# nobody was handed the backlog, the hunters or the hazards, and nobody was announced.
+	# See [method _on_peer_admitted].
+
+
+## A peer said it can receive: now it can be welcomed.
+func _on_peer_admitted(peer_id: int, player_id: int) -> void:
+	var session := server.session_by_userid(player_id) if server != null else null
+
+	if session == null or session.peer_id != peer_id or not _joined.has(session.userid):
+		return
 
 	_welcome(session)
 

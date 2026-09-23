@@ -48,6 +48,13 @@ var _handles: Dictionary = {}
 var _next := 1
 var _log: Array[Dictionary] = []
 
+## How much of [member _log] is kept.
+##
+## [b]Bounded, because this sink is the one a real player's client runs.[/b] The log is
+## for a suite, which forgets it between checks; a player eating several times a second
+## for an hour appended a dictionary per blip for as long as the client was open.
+const LOG_LIMIT := 256
+
 
 func _init(p_sound: HungrySound = null) -> void:
 	sound = p_sound
@@ -69,6 +76,8 @@ func play(request: Dictionary) -> int:
 	# test of this game's audio decisions rather than of a stand-in.
 	_handles[handle] = request.duplicate()
 	_log.append(request.duplicate())
+	if _log.size() > LOG_LIMIT:
+		_log.remove_at(0)
 
 	if sound != null and is_instance_valid(sound):
 		# The pitch dot-audio rolled, not one this file picks. A pitch chosen down here

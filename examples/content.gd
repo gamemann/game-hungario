@@ -411,6 +411,22 @@ func _test_rider() -> void:
 			% [rider.built_slots(), rider.drawn_slots()]
 	)
 
+	# Above the disc it rides. A part's z is relative to the rider and the rider sits in
+	# the renderer, which draws every monster on its own canvas — so a negative z is a part
+	# drawn UNDER its monster. The body was at -20 and no rider built from content had
+	# ever been visible; only a rendered frame showed it.
+	var lowest := 0
+	var layers: Dictionary = {}
+	for slot: StringName in rider._built.keys():
+		var part := rider._built[slot] as Node2D
+		lowest = mini(lowest, part.z_index)
+		layers[slot] = part.z_index
+	_check(
+		lowest >= 0 and int(layers.get(&"trail", 0)) < int(layers.get(&"body", 0))
+			and int(layers.get(&"body", 0)) < int(layers.get(&"hat", 0)),
+		"drawn above its monster, trail under body under hat (%s)" % str(layers)
+	)
+
 	var built: Node2D = rider._built.get(&"body")
 	_check(built != null, "the body is a node from the pack")
 

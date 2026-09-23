@@ -103,6 +103,18 @@ var _board_accum: float = 0.0
 ## [method _watch_mass].
 var _last_mass: float = 0.0
 var _last_carried: int = 0
+var _last_pieces: int = 0
+
+## When this player last asked to split and to eject, by button, in
+## `Time.get_ticks_msec()`. See [method _asked_recently].
+var _asked_at: Dictionary = {}
+
+## How long after asking a split or an eject may take to show up in the monster.
+##
+## Long enough for a round trip, a snapshot interval and the interpolation delay on a real
+## connection; short enough that a burst arriving well after the key was let go is not
+## heard as a split the player made.
+const ASKED_WINDOW_MSEC := 750
 
 ## Who ate us, so a dead player has somebody to watch. See [method _watched].
 var _watching: int = 0
@@ -472,7 +484,7 @@ func _physics_process(delta: float) -> void:
 		if not net.clock.is_synced():
 			continue
 
-		bridge.client_tick(net.clock.input_tick(), sampler.sample(delta))
+		bridge.client_tick(net.clock.input_tick(), _sample(delta))
 
 
 func _process(delta: float) -> void:
@@ -534,10 +546,33 @@ func _start_offline() -> void:
 	DotLog.info(CHANNEL, "playing offline", {"bots": _bots.size()})
 
 
+## The sampler's command, remembering which of the two mass actions it asked for.
+##
+## Both are heard by watching the monster rather than the key, because pressing split
+## while too small or on cooldown does nothing and a sound for it would be a lie. But a
+## monster's piece count also rises when a pepper bursts it, and its mass also falls when
+## a split's first half lands a snapshot before the second — so the change is only
+## attributed to a key the player actually pressed a moment ago.
+func _sample(delta: float = 0.0) -> Dot2DCommand:
+	var command := sampler.sample(delta)
+	var now := Time.get_ticks_msec()
+
+	for button in [Dot2DCommand.BUTTON_SPLIT, Dot2DCommand.BUTTON_EJECT]:
+		if command.is_pressed(int(button)):
+			_asked_at[button] = now
+
+	return command
+
+
+func _asked_recently(button: int) -> bool:
+	return _asked_at.has(button) \
+		and Time.get_ticks_msec() - int(_asked_at[button]) <= ASKED_WINDOW_MSEC
+
+
 func _tick_offline(_delta: float) -> void:
 	_tick += 1
 
-	var commands: Dictionary = {1: sampler.sample()}
+	var commands: Dictionary = {1: _sample()}
 
 	for id in _bots:
 		var monster := world.monster_for(id)
@@ -640,7 +675,13 @@ func _on_cue(kind: int, data: Dictionary) -> void:
 				)
 
 		HungryEvents.Kind.THROW:
-			presentation.on_throw()
+			# Your own, as offline hears it through `_on_projectile_thrown`. The cue goes to
+			# every client for every throw on the map, and the sound is flat rather than
+			# placed, so without this a netted player heard somebody's pepper on the far
+			# side of the arena as though they had thrown it themselves.
+			var shot: Variant = data.get("shot")
+			if shot is HungryProjectile and (shot as HungryProjectile).thrower_id == me:
+				presentation.on_throw()
 
 
 ## Turns "I got bigger" into a noise.
@@ -663,19 +704,33 @@ func _watch_mass() -> void:
 	if monster == null or not monster.alive:
 		_last_mass = 0.0
 		_last_carried = 0
+		_last_pieces = 0
 		return
 
 	var mass := monster.mass()
+	var pieces := monster.piece_count()
 
 	if _last_mass <= 0.0:
 		# First look, or the first frame after a respawn. A monster appearing at its
 		# starting mass has not eaten anything.
 		_last_mass = mass
 		_last_carried = monster.carried.size()
+		_last_pieces = pieces
 		return
 
 	var gained := mass - _last_mass
+	var more_pieces := pieces > _last_pieces
 	_last_mass = mass
+	_last_pieces = pieces
+
+	# Split and eject had a voice each in the bank since the first commit, and a row each
+	# in dot-audio's catalogue, and nothing ever played either: the one action this game
+	# is about was silent.
+	if more_pieces and _asked_recently(Dot2DCommand.BUTTON_SPLIT):
+		presentation.on_split()
+	elif not more_pieces and gained <= -HungryContent.EJECT_MASS * 0.6 \
+			and _asked_recently(Dot2DCommand.BUTTON_EJECT):
+		presentation.on_eject()
 
 	# Through the presentation layer rather than straight at the bank. `HungrySound` still
 	# makes the noise -- it is dot-audio's sink here -- but the cap, the cooldown and the
@@ -684,7 +739,12 @@ func _watch_mass() -> void:
 	# frame is a click.
 	var at := monster.centre()
 
-	if gained >= HungryContent.FRUIT_MASS * 0.8:
+	# Not while a piece is appearing. A split or a burst conserves mass only once both
+	# halves are seen; over the network the new piece and its parent's halved mass need
+	# not land on the same frame, and the gap reads as a mouthful worth half the monster.
+	if more_pieces:
+		pass
+	elif gained >= HungryContent.FRUIT_MASS * 0.8:
 		presentation.on_fruit_eaten(at)
 	elif gained >= 0.5:
 		# Pitched by how much it was worth, through the same curve the food tiers use, so
@@ -732,11 +792,6 @@ func _on_roster_changed(player_id: int) -> void:
 		renderer.forget(player_id)
 
 
-## Sends a chosen loadout, and says what happens next.
-##
-## The server validates it and it takes effect on the next spawn — a player who could
-## change their trait mid-fight would change it the moment they were losing — so the feed
-## says so rather than leaving them wondering whether the button did anything.
 ## Pushes the player's settings at everything that reads one.
 ##
 ## [b]Pushed rather than read.[/b] The camera, the sound and the HUD each hold the value
@@ -781,6 +836,11 @@ func _on_settings_applied(_changed: PackedStringArray) -> void:
 		hud.say("Settings saved.", Color(0.62, 0.78, 0.68))
 
 
+## Sends a chosen loadout, and says what happens next.
+##
+## The server validates it and it takes effect on the next spawn — a player who could
+## change their trait mid-fight would change it the moment they were losing — so the feed
+## says so rather than leaving them wondering whether the button did anything.
 func _on_loadout_chosen(loadout: DotLoadout) -> void:
 	if bridge != null:
 		bridge.publish_loadout(loadout)

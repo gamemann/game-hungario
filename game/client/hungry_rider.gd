@@ -99,7 +99,15 @@ func _rebuild() -> void:
 			continue
 
 		var node := instance as Node2D
-		node.z_index = clampi(step.layer - 50, -20, 20)
+		# [b]Never below zero.[/b] `z_index` is relative to the rider, and the rider is a
+		# child of the renderer, which draws every monster's disc on its own canvas. This
+		# was `layer - 50`, which put the body (layer 20) at -20: underneath the disc it
+		# was riding, so every rider built from real content was invisible, in every
+		# frame, while every check about the plan, the parts and the dressing passed. The
+		# drawn fallback never had the problem, which made the downloaded upgrade the one
+		# that could not be seen. A fifth of the slot's layer keeps the order between
+		# parts — trail, then body, then hat — and all of it above the disc.
+		node.z_index = clampi(step.layer / 5, 0, 20)
 		add_child(node)
 		_built[step.slot] = node
 		_step_of[step.slot] = step

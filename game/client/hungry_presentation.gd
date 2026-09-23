@@ -549,6 +549,10 @@ func on_split() -> void:
 	audio.play(&"split")
 
 
+func on_eject() -> void:
+	audio.play(&"eject")
+
+
 func on_pickup() -> void:
 	audio.play(&"pickup")
 
