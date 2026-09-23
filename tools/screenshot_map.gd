@@ -36,9 +36,23 @@ func _initialize() -> void:
 	DirAccess.make_dir_recursive_absolute(OUT_DIR)
 
 	var wanted := &"warrens"
+	# [b]Where the player stands, and what the files are called.[/b] The default spot is
+	# the one every level so far has been looked at from; `--at=x,y` puts the player
+	# somewhere a level's own feature is — the reef's lagoon is 632 units east of the
+	# default and invisible from it, which is how this option came to exist — and
+	# `--name=` keeps those framings from overwriting the default ones.
+	var at := Vector2.INF
+	var tag := ""
 
 	for argument in OS.get_cmdline_user_args():
-		if not argument.begins_with("-"):
+		if argument.begins_with("--at="):
+			var parts := argument.trim_prefix("--at=").split(",")
+
+			if parts.size() == 2:
+				at = Vector2(float(parts[0]), float(parts[1]))
+		elif argument.begins_with("--name="):
+			tag = "_" + argument.trim_prefix("--name=")
+		elif not argument.begins_with("-"):
 			wanted = StringName(argument)
 
 	var preset := HungryPreset.for_id(wanted)
@@ -68,7 +82,8 @@ func _initialize() -> void:
 		_world.tick({})
 
 	_world.add_player(1, "Screenshot")
-	_world.spawn(1, Vector2(0.0, _world.arena.bounds.size.y * 0.36))
+	_world.spawn(1, at if at != Vector2.INF
+		else Vector2(0.0, _world.arena.bounds.size.y * 0.36))
 	_world.tick({})
 
 	_camera = HungryCamera.framing(
@@ -88,9 +103,9 @@ func _initialize() -> void:
 	# says the mode still draws when the camera has zoomed out, which is the framing
 	# nothing in this project had ever rendered.
 	_shots = [
-		{"name": "%s_arena" % wanted, "mass": 0.0, "whole": true},
-		{"name": "%s_gate" % wanted, "mass": 0.0, "whole": false},
-		{"name": "%s_grown" % wanted, "mass": preset.win_mass * 0.55, "whole": false},
+		{"name": "%s%s_arena" % [wanted, tag], "mass": 0.0, "whole": true},
+		{"name": "%s%s_gate" % [wanted, tag], "mass": 0.0, "whole": false},
+		{"name": "%s%s_grown" % [wanted, tag], "mass": preset.win_mass * 0.55, "whole": false},
 	]
 
 

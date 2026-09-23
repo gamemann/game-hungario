@@ -44,7 +44,8 @@ const WARRENS := &"warrens"
 ## A line of rocks down a corridor, alternately near one wall and the other.
 const SLALOM := &"slalom"
 
-## A barrier across the world whose channels widen from one end to the other.
+## A barrier across the world whose channels widen from one end to the other, and a
+## second one behind it whose channels widen the other way. See [method _reef].
 const REEF := &"reef"
 
 
@@ -65,6 +66,16 @@ static func ids() -> Array[StringName]:
 var blocks: PackedVector3Array = PackedVector3Array()
 
 var id: StringName = NONE
+
+## Which runs of [member blocks] are one barrier, as `(first, count)`.
+##
+## [b]Empty for a layout that is not made of barriers[/b], which is every one but the reef.
+## It exists because the reef stopped being one chain: a channel is a gap between two
+## ADJACENT rocks of the SAME chain, and the last rock of one barrier and the first of the
+## next are neighbours in [member blocks] and nothing at all on the map. A check that
+## walked the array pairwise — which is what the reef's section did while there was one
+## chain — would report a "channel" nine hundred units wide running along the lagoon.
+var chains: Array[Vector2i] = []
 
 
 static func none() -> HungryLayout:
@@ -239,18 +250,32 @@ const REEF_RADIUS := 0.075
 
 ## The narrowest channel, edge to edge, as the same fraction.
 ##
-## At `reef`'s world size this is 248 units, so it admits a radius of 124 — about a
-## tenth of the winning mass on this curve. It is deliberately the tightest thing on the
+## At `reef`'s world size this is 248 units, so it admits a radius of 124 — a mass of
+## 240 on this curve (`base_radius` 8, square root), a sixth of the winning mass. It is deliberately the tightest thing on the
 ## map, walls included: see [method reef_end_fraction], which is what keeps it so.
 const REEF_TIGHT := 0.108
 
 ## The widest channel, same units.
 ##
-## 828 units at `reef`'s size, so a radius of 414 and a mass of 2140 — well past
+## 828 units at `reef`'s size, so a radius of 414 and a mass of 2680 — well past
 ## [member HungryPreset.win_mass] for that mode. [b]That margin is the mode's promise
-## that it is not a cage[/b]: the only way to be too big for every channel is to be half
-## as big again as the mass that ends the round.
+## that it is not a cage[/b]: the only way to be too big for every channel is to be
+## nearly twice the mass that ends the round. (This said 2140 until the lagoon was sized
+## against the real curve; the radius was right and the mass was worked from the wrong
+## base radius.)
 const REEF_WIDE := 0.36
+
+## How far behind the fore reef the back reef stands, as a fraction of the short
+## half-extent, centre to centre.
+##
+## [b]Sized by the thing that has to travel along it.[/b] At `reef`'s size this is 1265
+## units, which leaves a lagoon 920 across between the two faces and a strip 862 deep
+## behind the back reef. A monster at the winning mass is 620 across, so both are about
+## half as wide again as the leader: room to travel along and to turn in, and NOT room to
+## be passed in — two monsters that size cannot stand abreast in 920, which is the point
+## of a lagoon. At 0.5 it is 805 and a leader has 90 units either side for the whole walk;
+## at 0.6 the strip behind shrinks to 747 and stops being floor anybody grown can use.
+const LAGOON_AT := 0.55
 
 
 ## A barrier across the world with four channels through it, tight at one end and open at
@@ -278,6 +303,17 @@ const REEF_WIDE := 0.36
 ## warrens' perimeter lane is open to everybody for ever and is why its ring is escapable;
 ## this map's is not, which is what makes the far end worth owning.
 ##
+## [b]The lagoon is the second half, and it is the half the leader pays for.[/b] A second
+## barrier stands [constant LAGOON_AT] behind the first with one door the width of the
+## fore reef's widest channel and three gates the width of its second — see [method
+## back_reef_widths]. The door is behind the fore reef's TIGHT end, and the fore reef's two
+## channels a grown monster fits are both at the other end. So a small monster crosses
+## both barriers on one line, and anything over about 760 mass comes through the fore reef
+## in the southern half and has to walk the lagoon — 1284 units from the third channel,
+## 2360 from the widest, between two walls of rock in a strip too narrow to be passed in —
+## to the door before it can cross again. The first half made crossing cost distance; the
+## second makes it cost distance in the one place a leader cannot turn aside.
+##
 ## Built along the SHORT axis and sized off the short half-extent, so the barrier spans
 ## the world rather than sitting in the middle of it: across a corridor it is a wall with
 ## four channels, and in a square it is the same thing at the same proportions. A chain
@@ -287,6 +323,31 @@ static func _reef(bounds: Rect2) -> HungryLayout:
 	var out := HungryLayout.new()
 	out.id = REEF
 
+	var short_half := minf(bounds.size.x, bounds.size.y) * 0.5
+
+	# The fore reef, through the middle of the world, tight end first. Unchanged since the
+	# reef was one barrier, deliberately: the lagoon is a second half added behind it, and
+	# a first half that moved to make room would be a different level wearing its name.
+	_append_chain(out, _reef_chain(bounds, 0.0, channel_widths(short_half)))
+	# The back reef, LAGOON_AT behind it: one door at the end behind the fore reef's tight
+	# channel, and three equal gates. See [method back_reef_widths].
+	_append_chain(out, _reef_chain(
+		bounds, short_half * LAGOON_AT, back_reef_widths(short_half)
+	))
+
+	return out
+
+
+## One barrier of rocks [param behind] units along the crossing axis from the world's
+## centre, leaving [param gaps] between them in order from the chain axis's low end.
+##
+## Both reefs are laid out from the same end, so block order and [method channels] order
+## are the same direction along the chain for both — the fore reef's tight channel and the
+## back reef's door are each the first channel of their barrier, and they are behind one
+## another on the map.
+static func _reef_chain(bounds: Rect2, behind: float, gaps: PackedFloat32Array) -> PackedVector3Array:
+	var out := PackedVector3Array()
+
 	# The chain runs along the SHORTER axis, so it is a barrier rather than a central
 	# reservation. `slalom` reads the same rectangle and takes the opposite answer,
 	# because a slalom is a thing you go along and a reef is a thing you go through.
@@ -295,7 +356,6 @@ static func _reef(bounds: Rect2) -> HungryLayout:
 	var centre := bounds.get_center()
 
 	var radius := short_half * REEF_RADIUS
-	var gaps := channel_widths(short_half)
 
 	# Laid out from one end so the cumulative sum is the position, rather than from the
 	# middle outward: the channels are not symmetric, so there is no middle to work from.
@@ -306,16 +366,21 @@ static func _reef(bounds: Rect2) -> HungryLayout:
 
 	var along := -span * 0.5
 
-	for step in range(REEF_COUNT):
+	for step in range(gaps.size() + 1):
 		if step > 0:
 			along += gaps[step - 1] + radius * 2.0
 
-		out.blocks.append(
-			Vector3(centre.x + along, centre.y, radius) if along_x
-			else Vector3(centre.x, centre.y + along, radius)
+		out.append(
+			Vector3(centre.x + along, centre.y + behind, radius) if along_x
+			else Vector3(centre.x + behind, centre.y + along, radius)
 		)
 
 	return out
+
+
+static func _append_chain(layout: HungryLayout, chain: PackedVector3Array) -> void:
+	layout.chains.append(Vector2i(layout.blocks.size(), chain.size()))
+	layout.blocks.append_array(chain)
 
 
 ## The four channel widths, tight end first, in world units.
@@ -332,6 +397,41 @@ static func channel_widths(short_half: float) -> PackedFloat32Array:
 		out.append(short_half * lerpf(
 			REEF_TIGHT, REEF_WIDE, float(step) / float(REEF_COUNT - 2)
 		))
+
+	return out
+
+
+## The back reef's four gaps, door first, in world units.
+##
+## [b]One door and three gates, and the same total opening as the fore reef.[/b] The door
+## is the fore reef's widest channel; each gate is the MEAN of the fore reef's other three,
+## which on a linear spread is exactly its second channel (442 at `reef`'s size). So the
+## chain is as long as the fore reef's, its ends leave the same run-round, and the two
+## barriers let the same total width through — distributed so that the fore reef sorts
+## monsters by size ALONG its length and the back reef sorts them in one step: under
+## about 760 mass you cross it anywhere, over it you cross at the door and nowhere else.
+##
+## [b]Why not the fore reef mirrored, which was the first design.[/b] A mirror puts the
+## back reef's open end behind the fore reef's tight one, and on paper a leader walks the
+## whole lagoon. On this mass curve it does not: `base_radius` is 8, a monster at `reef`'s
+## winning mass is 620 across, and that fits the 635 third channel of BOTH barriers —
+## which a mirror leaves 207 units apart, in the middle. The mirrored lagoon taxed only
+## monsters over 1575 mass, which is past the mass that ends the round. The gates here
+## are sized so the band that pays is everybody over the second channel, which is the
+## leader and whoever is big enough to be chasing them.
+static func back_reef_widths(short_half: float) -> PackedFloat32Array:
+	var fore := channel_widths(short_half)
+	var door := fore[fore.size() - 1]
+	var rest := 0.0
+
+	for index in range(fore.size() - 1):
+		rest += fore[index]
+
+	var gate := rest / float(fore.size() - 1)
+	var out := PackedFloat32Array([door])
+
+	for _step in range(fore.size() - 1):
+		out.append(gate)
 
 	return out
 
@@ -475,6 +575,115 @@ func widest_way_past(bounds: Rect2) -> float:
 	return tightest
 
 
+## The channels through one barrier, measured off the discs it is actually built of.
+##
+## Each is `{"mouth": Vector2, "width": float, "normal": Vector2}`: the midpoint between
+## two adjacent rocks of the chain, the clear distance between their faces, and the unit
+## direction THROUGH the gap (either sign — [method route_across] picks the one it
+## needs). In block order, which for every barrier here is tight end first.
+##
+## [b]Measured rather than recomputed from [method channel_widths][/b], because this is
+## the representation a monster meets. The reef's section compares the two; if they are
+## asked to agree they must come from different places.
+func channels(chain: int) -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+
+	if chain < 0 or chain >= chains.size():
+		return out
+
+	var run := chains[chain]
+
+	for index in range(run.x, run.x + run.y - 1):
+		var here := blocks[index]
+		var next := blocks[index + 1]
+		var a := Vector2(here.x, here.y)
+		var b := Vector2(next.x, next.y)
+		var along := (b - a).normalized()
+		var gap := a.distance_to(b) - here.z - next.z
+
+		out.append({
+			"mouth": a + along * (here.z + gap * 0.5),
+			"width": gap,
+			"normal": Vector2(-along.y, along.x),
+		})
+
+	return out
+
+
+## Where to steer to get from [param from] to the far side of every barrier, for a
+## monster of [param radius], or nothing when there is no way across for one that size.
+##
+## [b]Three points per barrier: in front of the mouth, the mouth, and behind it[/b], at
+## the nearest channel that admits the radius plus [param margin], measured from where the
+## route already is. The approach and exit points stand the rock's radius plus the
+## monster's plus the margin off the chain's line, so a monster steering at one is never
+## steering at a point inside a rock — a waypoint placed without its radius is how a
+## bus in this family was once aimed at the middle of a pillar.
+##
+## [b]It ignores the run-round at each end, deliberately.[/b] That gap is narrower than
+## the third channel, so it only ever matters to a monster small enough to cross anywhere,
+## and a route that sometimes goes round the end and sometimes through the reef is two
+## routes to check rather than one.
+##
+## Barriers are crossed nearest first, measured along each one's own normal, which is the
+## order a monster meets them in from either side.
+func route_across(from: Vector2, radius: float, margin: float = 24.0) -> PackedVector2Array:
+	var out := PackedVector2Array()
+	var order: Array[int] = []
+
+	for chain in range(chains.size()):
+		order.append(chain)
+
+	order.sort_custom(func(a: int, b: int) -> bool:
+		return _chain_distance(a, from) < _chain_distance(b, from)
+	)
+
+	var here := from
+
+	for chain in order:
+		var best: Dictionary = {}
+		var best_cost := INF
+
+		for channel in channels(chain):
+			if float(channel["width"]) < (radius + margin) * 2.0:
+				continue
+
+			var cost := here.distance_to(channel["mouth"])
+
+			if cost < best_cost:
+				best_cost = cost
+				best = channel
+
+		if best.is_empty():
+			return PackedVector2Array()
+
+		var mouth: Vector2 = best["mouth"]
+		var normal: Vector2 = best["normal"]
+
+		# Pointed from where the route is toward the far side of this barrier.
+		if normal.dot(mouth - here) < 0.0:
+			normal = -normal
+
+		var standoff := blocks[chains[chain].x].z + radius + margin
+		out.append(mouth - normal * standoff)
+		out.append(mouth)
+		out.append(mouth + normal * standoff)
+		here = mouth + normal * standoff
+
+	return out
+
+
+## How far [param at] is from the line of one barrier's rocks.
+func _chain_distance(chain: int, at: Vector2) -> float:
+	var run := chains[chain]
+	var first := blocks[run.x]
+	var last := blocks[run.x + run.y - 1]
+	var a := Vector2(first.x, first.y)
+	var b := Vector2(last.x, last.y)
+	var along := (b - a).normalized()
+	return absf((at - a).dot(Vector2(-along.y, along.x)))
+
+
 # --- Resolving -------------------------------------------------------------
 
 ## Pushes one moving circle out of anything it is inside, and takes the velocity with it.
@@ -560,6 +769,7 @@ func describe() -> Dictionary:
 	return {
 		"id": String(id),
 		"blocks": blocks.size(),
+		"chains": chains.size(),
 		"gap": narrowest_gap() if not blocks.is_empty() else 0.0,
 	}
 

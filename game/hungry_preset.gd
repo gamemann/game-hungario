@@ -109,12 +109,18 @@ static func gauntlet() -> HungryPreset:
 	# work.
 	preset.world_size = Vector2(6708.0, 1342.0)
 
-	# [b]Raised from 700 when the slalom arrived, so the mode's density did not quietly
-	# drop when its floor did.[/b] Five rocks cover about an eighth of the corridor and
-	# `HungryWorld._cull_blocked` deletes everything the scatter puts inside one, so the
-	# old number over the new floor is an eighth less food on the same amount of walkable
-	# ground — a starvation change nobody asked for, arriving as a side effect of a level.
-	preset.food_target = 790
+	# [b]Frenzy's density on the floor that is left, which is LOWER than Frenzy's
+	# count.[/b] Five rocks cover 11.3% of the corridor. `HungryWorld._cull_blocked`
+	# takes back whatever the scatter puts inside one, and the scatter then tops the
+	# field back up to its target on open floor — so the target is how much food stands
+	# on the floor, and the same count on less floor is MORE food per unit of it. 700
+	# over 7.98 million walkable square units is Frenzy's 77.8 per million.
+	#
+	# It was raised to 790 when the slalom arrived, on the reasoning that the cull was a
+	# permanent loss to be made up — which is backwards, and made the corridor 27% richer
+	# than the square it was built to match, while a check computing the same backwards
+	# arithmetic agreed with it. Warrens had it right from the start.
+	preset.food_target = 620
 	preset.fruit_target = 18
 	preset.item_target = 26
 	preset.win_mass = 900.0
@@ -204,9 +210,17 @@ static func warrens() -> HungryPreset:
 ## is open to everybody for ever, which is exactly why its ring is escapable; this one is
 ## not, and that is what makes the open end of the reef worth standing on.
 ##
+## [b]And there is a second barrier behind it: a lagoon, and a door.[/b] The back reef
+## stands 1265 units behind the first with one door as wide as the fore reef's widest
+## channel and three gates as wide as its second, and the door is behind the fore reef's
+## TIGHT end. A small monster crosses both on one line; anything over about 760 mass fits
+## only the fore reef's two open channels, both at the other end, and has to walk the
+## lagoon between them — 1284 to 2360 units in a strip 920 across — to the door. See
+## [method HungryLayout.back_reef_widths].
+##
 ## [b]Not a cage, and the margin is in the numbers rather than in an intention.[/b] The
-## widest channel admits a radius of 414, which on this curve is a mass of 2140 — half as
-## much again as [member win_mass]. A monster too big for every channel has to be bigger
+## widest channel admits a radius of 414, which on this curve is a mass of 2680 — nearly
+## twice [member win_mass]. A monster too big for every channel has to be bigger
 ## than the mass that ends the round.
 static func reef() -> HungryPreset:
 	var preset := HungryPreset.new()
@@ -220,11 +234,18 @@ static func reef() -> HungryPreset:
 	preset.world_size = Vector2(4600.0, 4600.0)
 
 	# [b]Classic's density over the floor that is actually left.[/b] Classic scatters
-	# 1,100 over 5,200 squared; the same food per unit of rectangle here is 861, and the
-	# five rocks cover 2.2% of it, which `HungryWorld._cull_blocked` deletes. 880 is what
-	# survives the cull at Classic's density — the same arithmetic Warrens and Gauntlet
-	# do, for the same reason: a level must not arrive as a starvation change.
-	preset.food_target = 880
+	# 1,100 over 5,200 squared, 40.7 per million square units. The field REFILLS what
+	# `HungryWorld._cull_blocked` takes out of a rock — a culled slot is a missing slot
+	# and the scatter tops back up to the target — so the target is the number standing
+	# on the floor, and the floor is the rectangle less ten rocks: 20.2 million square
+	# units, 4.4% under rock. 820 is Classic's density on that.
+	#
+	# It was 880 with one barrier, argued the other way round — as if the cull were a
+	# permanent loss the target had to be raised to cover — which made the reef 4.5%
+	# richer than the square it claimed to match. The suite measures the food that is
+	# actually alive now rather than repeating the arithmetic; see `headless_round`'s
+	# "food on the floor that is left".
+	preset.food_target = 820
 
 	# [b]Above density, like Warrens and for a sharper version of its reason.[/b] A
 	# pepper splits somebody into halves that fit a channel they did not fit before, so

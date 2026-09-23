@@ -967,18 +967,23 @@ func _test_game_change() -> void:
 	var mine := _client.bridge.local_player_id
 	var before_world := module.world
 
+	# [b]To the reef, not to frenzy, since the lagoon.[/b] Frenzy is an empty square, so
+	# this change had only ever proved that a connected client follows a new SIZE and a
+	# new SEED; a mode with rocks in it adds the one thing a client derives rather than
+	# receives — the discs it predicts itself against — and nothing had carried that
+	# across a live change until now. The reef is the level with the most of them.
 	var changed: DotResult = await _server.games.change_game(
-		HungryModule.GAME_FRENZY, "sandbox"
+		HungryModule.GAME_REEF, "sandbox"
 	)
 
-	if not _check(changed.ok, "the server changes to frenzy", str(changed.error)):
+	if not _check(changed.ok, "the server changes to the reef", str(changed.error)):
 		_done()
 		return
 
 	await _frames(10)
 
 	_check(module.world != before_world, "onto a new world")
-	_check(String(module.world.preset.id) == "frenzy", "under the new preset")
+	_check(String(module.world.preset.id) == "reef", "under the new preset")
 	_check(_link.is_connected_to_server(), "and the client is still connected")
 
 	var followed := await _until(func() -> bool:
@@ -996,6 +1001,24 @@ func _test_game_change() -> void:
 	_check(
 		_client.world.field.seed_value() == module.world.field.seed_value(),
 		"and the new field seed"
+	)
+
+	# The same ten rocks, both barriers, built on the client from the name in the hello.
+	# Compared disc by disc rather than by count: a client that built the reef against the
+	# OLD arena's rectangle has ten rocks at the wrong scale, and ten is ten.
+	var same_rocks := _client.world.layout.count() == module.world.layout.count() \
+		and _client.world.layout.chains.size() == module.world.layout.chains.size()
+
+	for index in range(mini(_client.world.layout.count(), module.world.layout.count())):
+		if not _client.world.layout.blocks[index].is_equal_approx(
+			module.world.layout.blocks[index]
+		):
+			same_rocks = false
+
+	_check(
+		same_rocks,
+		"and builds the reef and its lagoon disc for disc (%d rocks, %d barriers)"
+			% [_client.world.layout.count(), _client.world.layout.chains.size()]
 	)
 
 	var back_in := await _until(func() -> bool:

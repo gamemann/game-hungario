@@ -37,7 +37,7 @@ const HungryWorld := preload("../game/hungry_world.gd")
 const SEED := 20260828
 const TICK_RATE := 60
 
-const CHECKS := 266
+const CHECKS := 286
 
 var _passed := 0
 var _failed := 0
@@ -91,6 +91,8 @@ func _run() -> void:
 	_test_the_warrens()
 	_test_the_slalom()
 	_test_the_reef()
+	_test_the_lagoon()
+	_test_food_on_the_floor()
 	_test_spectating()
 
 	print("")
@@ -185,12 +187,38 @@ func _run_ticks(world: HungryWorld, count: int, commands: Dictionary = {}) -> vo
 ## every effect, then respawns everybody somewhere safe. A test that arranged the world
 ## before that happened had its arrangement thrown away, and the symptom was a monster
 ## standing a thousand units from where it was put, holding nothing.
+##
+## [b]And it has to be able to go live, which a world with nobody in it cannot.[/b]
+## dot-match waits in warmup for its minimum head count, so a settle called before the
+## first player is added runs out its five seconds and returns with the round still in
+## warmup — and then the FIRST tick after somebody joins is the transition, which resets
+## the world and respawns them wherever the safe spawn likes. Every level section here
+## settled before adding its player, so every one of them arranged a monster in front of
+## a rock or a gate, ticked twice, and drove whatever the reset had put somewhere else.
+## The reef's "a starting monster comes out the far side of the tight channel" was
+## measuring a monster respawned 900 units past it. A settle that gives up is a failure
+## now, recorded without adding to the total so a passing run's count is unchanged.
 func _settle(world: HungryWorld) -> void:
+	# A client's round state arrives from the authority; its own match never advances,
+	# and nothing it holds is reset by a transition it does not run.
+	if not world.is_authority:
+		return
+
 	for _i in range(TICK_RATE * 5):
 		if world.match_node.is_live():
 			return
 
 		world.tick({})
+
+	if not world.match_node.is_live():
+		_failed += 1
+		_failures.append(
+			"a world never went live, so anything arranged in it is thrown away at the "
+			+ "first tick after a player joins (state %d, %d monsters)"
+				% [world.match_node.state, world.monsters().size()]
+		)
+		print("  FAIL  a world never went live before its arrangement (%d monsters)"
+			% world.monsters().size())
 
 
 func _aim_at(from: Vector2, to: Vector2, buttons: int = 0) -> Dot2DCommand:
@@ -1220,14 +1248,20 @@ func _test_the_gauntlet() -> void:
 	)
 	# [b]The same food per unit of WALKABLE floor, which stopped being the same number
 	# as the target the day this mode got a level.[/b] Five slalom rocks stand on about
-	# an eighth of the corridor and everything the scatter puts inside one is culled, so
-	# `food_target == frenzy.food_target` would now be asserting that the corridor is an
-	# eighth hungrier than the square — a starvation mode arriving as a side effect of a
-	# level, and attributed to the level by nobody.
+	# an eighth of the corridor. Whatever the scatter puts inside one is culled and the
+	# field then REFILLS to its target on open floor, so the target is the food standing
+	# on the floor and the density is the target over the floor that is left.
+	#
+	# [b]This line used to multiply by the floor instead of dividing by it[/b] — the
+	# arithmetic of a cull that is a permanent loss, which it is not — and the preset
+	# had been tuned to the same backwards arithmetic, so the two agreed about a corridor
+	# 27% richer than the square. "food on the floor that is left" measures the living
+	# field now, which is the check that caught it; this one is the arithmetic, kept
+	# because a preset argued in a comment should be checked in the same terms.
 	var covered := HungryLayout.for_id(
 		preset.layout, Rect2(Vector2.ZERO, preset.world_size)
 	).covered_area()
-	var density := float(preset.food_target) * (1.0 - covered / area) / area
+	var density := float(preset.food_target) / (area - covered)
 	var frenzy_density := float(frenzy.food_target) / square
 
 	_check(
@@ -1238,6 +1272,7 @@ func _test_the_gauntlet() -> void:
 	)
 
 	var world := _make_world(preset, SEED + 31)
+	world.add_player(1, "Ada")
 	_settle(world)
 
 	var bounds := world.arena.bounds
@@ -1249,7 +1284,6 @@ func _test_the_gauntlet() -> void:
 		"%s" % str(bounds.size)
 	)
 
-	world.add_player(1, "Ada")
 	world.spawn(1, bounds.get_center())
 	_settle(world)
 
@@ -1288,7 +1322,13 @@ func _test_the_gauntlet() -> void:
 
 	# It reached the far end. A corridor whose length nothing can cross is a corridor
 	# nobody meets anybody in, and the run above is the only thing that would say so.
-	for _i in range(TICK_RATE * 20):
+	#
+	# [b]Sixty seconds, not twenty, and twenty only ever passed by accident.[/b] A starting
+	# monster moves about 130 units a second and this one starts at the west wall with
+	# five rocks to slide round. The old budget passed because the section settled before
+	# anybody had joined, the round went live on the first tick after, and the reset put
+	# the monster wherever the safe spawn liked — usually most of the way there already.
+	for _i in range(TICK_RATE * 60):
 		world.tick({1: _aim_at(monster.centre(), corners["east"])})
 
 	_check(
@@ -1349,6 +1389,7 @@ func _test_the_slalom() -> void:
 	)
 
 	var world := _make_world(preset, SEED + 83)
+	world.add_player(1, "Bram")
 	_settle(world)
 
 	var bounds := world.arena.bounds
@@ -1436,8 +1477,6 @@ func _test_the_slalom() -> void:
 
 	# --- A rock stops somebody ----------------------------------------------
 
-	world.add_player(1, "Bram")
-
 	var rock: Vector3 = layout.blocks[0]
 	var rock_at := Vector2(rock.x, rock.y)
 	# Up the corridor from the first rock, on its own line, driving straight at it.
@@ -1451,17 +1490,34 @@ func _test_the_slalom() -> void:
 		_done()
 		return
 
+	# [b]Aimed, not moved.[/b] This drive used to set `command.move` and nothing else, and
+	# this game steers by `aim` and `reach` — `move` is carried through to the motor and
+	# ignored by it. The monster never moved; the section settled before the player
+	# joined, the first tick after reset the round and respawned it, and "it gets past
+	# the rock" was measuring where the respawn had put it.
+	#
+	# Two legs, because driven for real a pointer held on a line through a disc's centre
+	# holds the monster against that disc's face for ever — the push-out takes the normal
+	# component and there is no tangent left to slide on. So: four seconds straight at
+	# the rock, which is the push-out's test, and then the pointer moves to the middle of
+	# the far lane beyond it, which is what a player going past does.
 	var piece_radius := monster.pieces[0].radius()
 	var entered := false
-	var command := Dot2DCommand.new()
-	command.move = Vector2.RIGHT
+	var lane_side := -signf(rock_at.y - bounds.get_center().y)
+	var wall := bounds.position.y if lane_side < 0.0 else bounds.end.y
+	var lane_mid := (rock_at.y + lane_side * rock.z + wall) * 0.5
+	var legs := [
+		[Vector2(rock_at.x + 4000.0, rock_at.y), TICK_RATE * 4],
+		[Vector2(rock_at.x + rock.z * 3.0, lane_mid), TICK_RATE * 12],
+	]
 
-	for _tick in range(240):
-		_run_ticks(world, 1, {1: command})
+	for leg in legs:
+		for _tick in range(int(leg[1])):
+			_run_ticks(world, 1, {1: _full_reach(monster.centre(), leg[0])})
 
-		if monster.alive and monster.pieces[0].state.position.distance_to(rock_at) \
-				< rock.z + piece_radius - 1.0:
-			entered = true
+			if monster.alive and monster.pieces[0].state.position.distance_to(rock_at) \
+					< rock.z + piece_radius - 1.0:
+				entered = true
 
 	_check(not entered, "and driving straight at a rock never puts it inside one")
 
@@ -1500,6 +1556,7 @@ func _test_the_warrens() -> void:
 	)
 
 	var world := _make_world(preset, SEED + 57)
+	world.add_player(1, "Ada")
 	_settle(world)
 
 	var bounds := world.arena.bounds
@@ -1572,12 +1629,16 @@ func _test_the_warrens() -> void:
 
 	# --- A rock stops somebody ----------------------------------------------
 
-	world.add_player(1, "Ada")
 
 	var ring: Vector3 = layout.blocks[0]
 	var ring_at := Vector2(ring.x, ring.y)
-	# Outside the ring on the same bearing, driving inward through the rock's middle.
-	var outside := bounds.get_center() + (ring_at - bounds.get_center()) * 1.9
+	# Outside the ring, driving inward AT the rock — four degrees off its centre line,
+	# which at this range is 80 units: well inside the rock's face, so the drive still
+	# meets it, and not exactly on its centre, which no pointer ever is. Dead centre on a
+	# disc is the one approach with no side to slide off to, and a monster held there
+	# stops against the face for good; see the note on the slide below.
+	var outside := bounds.get_center() \
+		+ (ring_at - bounds.get_center()).rotated(deg_to_rad(4.0)) * 1.9
 
 	world.spawn(1, outside)
 	_run_ticks(world, 2)
@@ -1597,7 +1658,7 @@ func _test_the_warrens() -> void:
 	# through a wall, which is the whole reason [HungryHazards] resolves before eating too.
 	var deepest := INF
 
-	for _i in range(TICK_RATE * 8):
+	for _i in range(TICK_RATE * 20):
 		world.tick({1: _aim_at(monster.centre(), bounds.get_center())})
 		deepest = minf(deepest, monster.centre().distance_to(ring_at))
 
@@ -1607,11 +1668,17 @@ func _test_the_warrens() -> void:
 		"closest approach %.0f to the middle of a %.0f rock" % [deepest, ring.z]
 	)
 
-	# [b]And it gets past anyway, which is the level working rather than failing.[/b] The
-	# first version of this check asserted the monster stayed outside the ring and was
-	# wrong: a starting monster driven at a rock slides along its face, arrives at a gate
-	# and goes through. That is what a ring with gates in it is FOR, and asserting the
-	# opposite would have frozen a level that does not let anybody in.
+	# [b]And it gets past anyway, which is the level working rather than failing.[/b] A
+	# starting monster driven at a rock slides along its face, arrives at a gate and goes
+	# through. That is what a ring with gates in it is FOR.
+	#
+	# [b]This check was rewritten once to match a monster that had been teleported.[/b]
+	# The first version asserted the monster stayed outside the ring, failed, and was
+	# turned round on the reading that the monster had slid in through a gate. It had not:
+	# the section settled before the player joined, the round went live on the first tick
+	# after, and the reset respawned the monster wherever the safe spawn liked. Driven for
+	# real and dead on the rock's centre it stays against the face for ever — the first
+	# version was right about that approach. Four degrees off, it slides in.
 	_check(
 		monster.centre().distance_to(bounds.get_center()) < ring_at.length() * 0.5,
 		"but slides round the face of it and in through a gate",
@@ -1628,8 +1695,8 @@ func _test_the_warrens() -> void:
 	# against. It reads as packet loss, which sends the next person to the netcode.
 	var predicted := _make_world(preset, SEED + 57)
 	predicted.is_authority = false
-	_settle(predicted)
 	predicted.add_player(2, "Bo")
+	_settle(predicted)
 	predicted.spawn(2, ring_at)
 	_run_ticks(predicted, 1)
 
@@ -1785,14 +1852,17 @@ func _test_the_reef() -> void:
 	)
 
 	var world := _make_world(preset, SEED + 131)
+	world.add_player(1, "Ada")
 	_settle(world)
 
 	var bounds := world.arena.bounds
 	var layout := world.layout
 
 	if not _check(
-		layout != null and layout.count() == HungryLayout.REEF_COUNT,
-		"five rocks stand across it (%d)" % (layout.count() if layout != null else -1)
+		layout != null and layout.count() == HungryLayout.REEF_COUNT * 2
+			and layout.chains.size() == 2,
+		"ten rocks stand across it, in two barriers (%d)"
+			% (layout.count() if layout != null else -1)
 	):
 		_drop(world)
 		_done()
@@ -1823,16 +1893,18 @@ func _test_the_reef() -> void:
 	# widths below come from `channel_widths`; the gaps come from the discs the world
 	# actually built. A chain laid out in the wrong order, or with a sign flipped, agrees
 	# with the constants and disagrees here.
+	#
+	# [b]Per barrier, not pairwise down the array.[/b] This loop walked `blocks` two at a
+	# time while there was one chain; with the back reef behind it, the last rock of the
+	# fore reef and the first of the back are neighbours in the array and 1,500 units apart
+	# on the map, and the pairwise walk reported a fifth "channel" that is not one.
+	# `channels(0)` is the fore reef's four; the lagoon section asks for the back's.
 	var short_half := minf(bounds.size.x, bounds.size.y) * 0.5
 	var wanted := HungryLayout.channel_widths(short_half)
 	var measured := PackedFloat32Array()
 
-	for index in range(layout.count() - 1):
-		var here := layout.blocks[index]
-		var next := layout.blocks[index + 1]
-		measured.append(
-			Vector2(here.x, here.y).distance_to(Vector2(next.x, next.y)) - here.z - next.z
-		)
+	for channel in layout.channels(0):
+		measured.append(float(channel["width"]))
 
 	var agree := wanted.size() == measured.size()
 
@@ -1913,15 +1985,12 @@ func _test_the_reef() -> void:
 	# The tight channel's middle, and the two points either side of the barrier on its own
 	# line. The barrier runs along the shorter axis, so crossing it is a move along the
 	# other one.
-	var first := layout.blocks[0]
-	var second := layout.blocks[1]
-	var mouth := (Vector2(first.x, first.y) + Vector2(second.x, second.y)) * 0.5
+	var mouth: Vector2 = layout.channels(0)[0]["mouth"]
 	var across := Vector2(0.0, 1.0) if bounds.size.x < bounds.size.y \
 		else Vector2(1.0, 0.0)
 	var start := mouth - across * 600.0
 	var target := mouth + across * 900.0
 
-	world.add_player(1, "Ada")
 	world.spawn(1, start)
 	_run_ticks(world, 2)
 
@@ -2008,16 +2077,376 @@ func _test_the_reef() -> void:
 	# A client is TOLD which layout, and builds it. Nothing about the rocks travels.
 	var predicted := _make_world(preset, SEED + 131)
 	predicted.is_authority = false
+	predicted.add_player(2, "Bo")
 	_settle(predicted)
 	predicted.adopt_layout(HungryLayout.REEF)
 	_check(
 		predicted.layout.count() == layout.count()
 			and predicted.layout.narrowest_gate(bounds) == layout.narrowest_gate(bounds),
-		"and a client builds the same five from one name in the hello"
+		"and a client builds the same ten from one name in the hello"
 	)
 	_drop(predicted)
 
 	_drop(world)
+	_done()
+
+
+## The reef's second half: a lagoon, and a back reef with one door in it.
+##
+## [b]What this section is about is a DISTANCE a grown monster is made to travel, so it
+## drives one along it.[/b] The back reef's door is behind the fore reef's tight end and
+## the two fore channels a grown monster fits are both at the other end, so the lagoon
+## between them is a walk that only the big pay. Every arithmetic check below would pass
+## over a back reef built on the wrong side, the wrong way round, or so close to the fore
+## reef that nothing fits between them; the drive would not.
+##
+## [b]It is driven along [method HungryLayout.route_across][/b], the layout's own answer
+## to "where do I steer to get across", rather than along waypoints written here — so the
+## route a check follows is derived from the same discs the world pushes a monster out of,
+## and a waypoint inside a rock is a failure of the layout rather than of the test.
+func _test_the_lagoon() -> void:
+	_section("the lagoon")
+
+	var preset := HungryPreset.reef()
+	# [b]The leader's size is read BEFORE the round is told it cannot end.[/b] A leader
+	# walks this route for over a minute at a fifth of full speed, eating the whole way,
+	# and the first version of this section fed it to the winning mass and drove it: it
+	# ate its way past the mass that ends the round a little way up the lagoon, the world
+	# reset under it, and the "leader" that came out behind the back reef was a freshly
+	# spawned monster somewhere else. The check is about the walk, so the round is
+	# lifted out of the way and the size stays the one the mode is played at.
+	var leader_mass := preset.win_mass
+	preset.win_mass = 1000000.0
+	var world := _make_world(preset, SEED + 173)
+	world.add_player(1, "Lea")
+	_settle(world)
+
+	var bounds := world.arena.bounds
+	var layout := world.layout
+
+	if not _check(
+		layout != null and layout.chains.size() == 2,
+		"the reef has a second barrier behind the first (%d)"
+			% (layout.chains.size() if layout != null else -1)
+	):
+		_drop(world)
+		_done()
+		return
+
+	var short_half := minf(bounds.size.x, bounds.size.y) * 0.5
+	var fore := layout.channels(0)
+	var back := layout.channels(1)
+	var wanted := HungryLayout.back_reef_widths(short_half)
+	var measured := PackedFloat32Array()
+
+	for channel in back:
+		measured.append(float(channel["width"]))
+
+	var agree := wanted.size() == measured.size()
+
+	for index in range(mini(wanted.size(), measured.size())):
+		if absf(wanted[index] - measured[index]) > 1.0:
+			agree = false
+
+	_check(
+		agree,
+		"the back reef builds the door and three gates it describes",
+		"built %s, described %s" % [_widths(measured), _widths(wanted)]
+	)
+
+	# [b]The door is behind the fore reef's TIGHT end.[/b] That one relation is the whole
+	# level: the other way round, a grown monster comes through the fore reef's open end
+	# and finds the door straight ahead of it, and the lagoon is a corridor nobody walks.
+	var chain_axis: Vector2 = (
+		Vector2(fore[fore.size() - 1]["mouth"]) - Vector2(fore[0]["mouth"])
+	).normalized()
+	var centre := bounds.get_center()
+	var door_at := (Vector2(back[0]["mouth"]) - centre).dot(chain_axis)
+	var tight_at := (Vector2(fore[0]["mouth"]) - centre).dot(chain_axis)
+	var third_at := (Vector2(fore[2]["mouth"]) - centre).dot(chain_axis)
+	var wide_at := (Vector2(fore[3]["mouth"]) - centre).dot(chain_axis)
+
+	_check(
+		door_at * tight_at > 0.0 and door_at * wide_at < 0.0 and door_at * third_at < 0.0,
+		"and the door is behind the fore reef's tight end, away from both its open channels",
+		"door at %.0f, tight %.0f, third %.0f, widest %.0f along the reef"
+			% [door_at, tight_at, third_at, wide_at]
+	)
+
+	# --- The lagoon, sized by the monster that has to walk it -----------------
+
+	var rules := world.tunables.mass_rules
+	var won := rules.radius_for(leader_mass)
+	var small := rules.radius_for(HungryContent.START_MASS)
+	var rock := layout.blocks[0].z
+	var across: Vector2 = fore[0]["normal"]
+
+	if (Vector2(back[0]["mouth"]) - Vector2(fore[0]["mouth"])).dot(across) < 0.0:
+		across = -across
+
+	var fore_line := Vector2(fore[0]["mouth"]).dot(across)
+	var back_line := Vector2(back[0]["mouth"]).dot(across)
+	var far_wall := maxf(bounds.position.dot(across), bounds.end.dot(across))
+	var lagoon := back_line - fore_line - rock * 2.0
+	var strip := far_wall - back_line - rock
+
+	_check(
+		lagoon > won * 2.0 * 1.3 and strip > won * 2.0 * 1.3,
+		"a monster at the winning mass has room to travel the lagoon and the strip behind it",
+		"lagoon %.0f, strip %.0f, against a leader %.0f across" % [lagoon, strip, won * 2.0]
+	)
+	_check(
+		lagoon < won * 4.0,
+		"and not room to be passed in it: two leaders cannot stand abreast",
+		"lagoon %.0f against two leaders %.0f" % [lagoon, won * 4.0]
+	)
+
+	# --- Who walks it, from the routes the layout gives ----------------------
+
+	# From in front of the fore reef's tight channel, which is the end the door is behind:
+	# the cheapest place to start for everybody, so the walk measured is the tax and not
+	# the approach.
+	var west: Vector2 = Vector2(fore[0]["mouth"]) - across * 900.0
+	var middling := rules.radius_for(1000.0)
+
+	_check(
+		_lagoon_walk(layout.route_across(west, small), chain_axis) < 400.0,
+		"a starting monster crosses both barriers almost on one line",
+		"walks %.0f along the lagoon" % _lagoon_walk(layout.route_across(west, small), chain_axis)
+	)
+	_check(
+		_lagoon_walk(layout.route_across(west, middling), chain_axis) > 1000.0,
+		"one of 1000 mass has to walk the lagoon from the third channel to the door",
+		"walks %.0f along the lagoon"
+			% _lagoon_walk(layout.route_across(west, middling), chain_axis)
+	)
+	_check(
+		_lagoon_walk(layout.route_across(west, won), chain_axis) > 2000.0,
+		"and one at the winning mass walks nearly all of it",
+		"walks %.0f along the lagoon" % _lagoon_walk(layout.route_across(west, won), chain_axis)
+	)
+
+	# [b]Not a cage, from either side.[/b] A leader in the strip behind the back reef has to
+	# have a way home, or the far side is a place the round ends with somebody parked in.
+	var behind := centre + across * (back_line - centre.dot(across) + rock + won + 100.0)
+	_check(
+		layout.route_across(behind, won).size() == 6,
+		"a leader behind the back reef has a way back across both",
+		"%d waypoints" % layout.route_across(behind, won).size()
+	)
+	_check(
+		layout.route_across(west, float(wanted[0]) * 0.5 + 1.0).is_empty(),
+		"and something too wide for the door has no route at all, rather than a wrong one"
+	)
+
+	# --- Driven: a leader walks the lagoon to the door ------------------------
+
+	world.spawn(1, west)
+	_run_ticks(world, 2)
+
+	var monster := world.monster_for(1)
+
+	if not _check(monster != null and monster.alive, "a monster spawns short of the reef"):
+		_drop(world)
+		_done()
+		return
+
+	world.feed_player(1, leader_mass - monster.mass())
+	_run_ticks(world, 2)
+
+	var route := layout.route_across(monster.centre(), monster.pieces[0].radius())
+	var reached := 0
+	var deepest := INF
+	var lagoon_low := INF
+	var lagoon_high := -INF
+	var ticks := 0
+
+	# Full reach toward the next waypoint and on to the one after it at 60 units: near is
+	# slow in this game, and a monster steered with the reach it would get from the
+	# distance to a point crawls the last hundred units of every leg.
+	for _i in range(TICK_RATE * 120):
+		if reached >= route.size():
+			break
+
+		if monster.centre().distance_to(route[reached]) < 60.0:
+			reached += 1
+			continue
+
+		world.tick({1: _full_reach(monster.centre(), route[reached])})
+		ticks += 1
+
+		var piece := monster.pieces[0]
+
+		for block in layout.blocks:
+			deepest = minf(
+				deepest,
+				piece.position().distance_to(Vector2(block.x, block.y)) - block.z
+					- piece.radius()
+			)
+
+		var here := monster.centre()
+
+		if here.dot(across) > fore_line + rock and here.dot(across) < back_line - rock:
+			lagoon_low = minf(lagoon_low, here.dot(chain_axis))
+			lagoon_high = maxf(lagoon_high, here.dot(chain_axis))
+
+	_check(
+		deepest > -2.0,
+		"a leader driven along its route never overlaps a rock, on any tick",
+		"deepest %.0f into a face" % deepest
+	)
+	_check(
+		reached == route.size() and monster.centre().dot(across) > back_line + rock,
+		"and comes out behind the back reef",
+		"%d of %d waypoints in %.1f s" % [reached, route.size(), float(ticks) / TICK_RATE]
+	)
+	_check(
+		lagoon_high - lagoon_low > 2000.0,
+		"having walked the lagoon from one end to the other to get there",
+		"%.0f along the lagoon" % (lagoon_high - lagoon_low)
+	)
+
+	# --- The straight line: the same start, the same commands, two sizes -----
+
+	# From in front of the fore reef's widest channel, straight across. A starting monster
+	# goes through the fore reef and a gate of the back one; a leader goes through the
+	# fore reef and meets gates it does not fit, and is still in the lagoon when the clock
+	# runs out. Nothing but the radius differs between the two runs.
+	var straight_from: Vector2 = Vector2(fore[3]["mouth"]) - across * 700.0
+	var straight_to := straight_from + across * 4000.0
+	var small_far := _straight_run(world, 1, straight_from, straight_to, 0.0)
+	var big_far := _straight_run(world, 1, straight_from, straight_to, leader_mass)
+
+	_check(
+		small_far > back_line + rock,
+		"a starting monster driven straight across goes through both barriers",
+		"reached %.0f, the back reef is at %.0f" % [small_far, back_line]
+	)
+	_check(
+		big_far > fore_line + rock and big_far < back_line - rock,
+		"and a leader on the same line is held in the lagoon",
+		"reached %.0f, between %.0f and %.0f" % [big_far, fore_line, back_line]
+	)
+
+	_drop(world)
+	_done()
+
+
+## How far a route runs along the reef between leaving the first barrier and reaching the
+## second: the walk the lagoon charges. Waypoints 2 and 3 are the fore exit and the back
+## approach — see [method HungryLayout.route_across].
+func _lagoon_walk(route: PackedVector2Array, chain_axis: Vector2) -> float:
+	if route.size() < 6:
+		return INF
+
+	return absf((route[3] - route[2]).dot(chain_axis))
+
+
+## A command at full reach toward [param to].
+func _full_reach(from: Vector2, to: Vector2) -> Dot2DCommand:
+	var command := Dot2DCommand.new()
+	var offset := to - from
+	command.aim = offset.normalized() if offset.length_squared() > 0.000001 else Vector2.RIGHT
+	command.reach = HungryNetCommand.MAX_REACH
+	return command
+
+
+## Respawns [param player] at [param from], grows it to [param mass] if that is above
+## where it starts, and drives it at [param to] for twenty-four seconds — a starting
+## monster covers about 130 units a second, so this is room for about 3000. Returns how far it got
+## along the line.
+func _straight_run(
+	world: HungryWorld, player: int, from: Vector2, to: Vector2, mass: float
+) -> float:
+	world.spawn(player, from)
+	_run_ticks(world, 2)
+
+	var monster := world.monster_for(player)
+
+	if monster == null or not monster.alive:
+		return -INF
+
+	if mass > monster.mass():
+		world.feed_player(player, mass - monster.mass())
+		_run_ticks(world, 2)
+
+	var direction := (to - from).normalized()
+	var furthest := -INF
+
+	for _i in range(TICK_RATE * 24):
+		world.tick({player: _full_reach(monster.centre(), to)})
+		furthest = maxf(furthest, monster.centre().dot(direction))
+
+	return furthest
+
+
+## Food per unit of the floor that is left, MEASURED, for every mode with a level in it.
+##
+## [b]The arithmetic this replaces was backwards and a check agreed with it.[/b] The
+## gauntlet's density check multiplied the target by the walkable fraction — the model of
+## a cull that is a permanent loss — and the gauntlet's target had been raised to 790 by
+## the same model. But [method HungryWorld._cull_blocked] takes a slot OUT of the field
+## and the scatter tops the field back up to its target on the next ticks, so the target
+## is what stands on the floor: 790 over the corridor's floor was 27% more food per unit
+## than Frenzy, and the reef's 880 was 4.5% more than Classic. Warrens alone had it right,
+## and the check and the preset agreeing with each other is exactly why nobody saw it.
+##
+## So this section counts the food that is alive in a settled world and divides it by the
+## floor, which is the only version of the number a player eats. Each mode is compared
+## with the empty square it was built to match.
+func _test_food_on_the_floor() -> void:
+	_section("food on the floor that is left")
+
+	# The control each level claims to match, as its own preset comment argues it.
+	var controls := {
+		&"gauntlet": HungryPreset.frenzy(),
+		&"warrens": HungryPreset.classic(),
+		&"reef": HungryPreset.classic(),
+	}
+
+	# Every layout is somebody's, so a sixth mode with rocks in it cannot arrive without
+	# being asked this. A check named after the levels that existed when it was written is
+	# the shape this project keeps finding.
+	var covered_layouts := {}
+
+	for mode in controls:
+		covered_layouts[HungryPreset.for_id(mode).layout] = true
+
+	var missing := PackedStringArray()
+
+	for layout_id in HungryLayout.ids():
+		if not covered_layouts.has(layout_id):
+			missing.append(String(layout_id))
+
+	_check(
+		missing.is_empty(),
+		"every layout is measured here against the square it claims to match",
+		"not measured: %s" % ", ".join(missing)
+	)
+
+	for mode in controls:
+		var preset := HungryPreset.for_id(mode)
+		var control: HungryPreset = controls[mode]
+		var world := _make_world(preset, SEED + 199)
+		world.add_player(1, "Ada")
+		_settle(world)
+		_run_ticks(world, TICK_RATE * 2)
+
+		var area := world.arena.bounds.size.x * world.arena.bounds.size.y
+		var floor_area := area - world.layout.covered_area()
+		var here := float(world.field.food.alive_count()) / floor_area
+		var there := float(control.food_target) / (control.world_size.x * control.world_size.y)
+
+		_check(
+			absf(here / there - 1.0) < 0.03,
+			"%s has %s's food per unit of open floor" % [mode, control.id],
+			"%.1f per million against %.1f: %d alive on %.2f million, %.1f%% under rock"
+				% [here * 1.0e6, there * 1.0e6, world.field.food.alive_count(),
+					floor_area / 1.0e6, (1.0 - floor_area / area) * 100.0]
+		)
+
+		_drop(world)
+
 	_done()
 
 
