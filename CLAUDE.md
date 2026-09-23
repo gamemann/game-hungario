@@ -14,6 +14,13 @@ breaks a wire contract to make a directory listing tidier, which is the trade th
 already documented when it explained why `content_id` exists separately from `game_id` at
 all.)*
 
+
+## The moderator's live tools: the honest subset
+
+dot-moderation's live tools are here (`HungryModTools`, built in the module because a game change replaces the world under it), and **only what a server can do to a monster on its own is supported**: slay (every piece devoured — the world's own death), respawn (the queue cancelled first), give and strip an item, rename, and bring, goto, send and return, which move every piece by one offset so a split monster arrives in its own shape.
+
+The rest is refused with a reason `modtools` prints, and the one worth reading is **noclip, freeze and speed: `Dot2DMotor` carries no admin modifiers in its replicated state**, where dot-player-controller's first-person motor does. A server that changed how a monster moves without the owning client knowing would have that client predict something else and be corrected on every snapshot — rubber-banding. Adding modifiers to dot-2d the way the first-person motor has them is the way in; it is not done here. God and buddha are refused because being eaten is the game, and health and slap because a monster has mass, not health.
+
 ## Why this project exists
 
 Three reasons, and the third is the one that shaped it.
@@ -670,7 +677,7 @@ done
 godot --headless --path . res://examples/headless_round.tscn   # 286 — the game
 godot --headless --path . res://examples/headless_stack.tscn   #  24 checks
 godot --headless --path . res://examples/headless_net.tscn     # 126 — the netcode
-godot --headless --path . res://examples/dedicated.tscn        # 169 — a real DotServer
+godot --headless --path . res://examples/dedicated.tscn        # 176 — a real DotServer
 godot --headless --path . res://examples/sandbox.tscn          #  84 — two real clients
 godot --headless --path . res://examples/content.tscn          #  46 — the cloud path
 godot --headless --path . res://examples/headless_presentation.tscn  # 48 — the client half

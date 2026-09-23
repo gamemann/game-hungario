@@ -141,7 +141,7 @@ The end-of-mode vote and the option to extend the current mode:
 ```bash
 godot --headless --path . res://examples/headless_round.tscn   # 186 checks, the game
 godot --headless --path . res://examples/headless_net.tscn     # 107 checks, the netcode
-godot --headless --path . res://examples/dedicated.tscn        #  81 checks, a real DotServer
+godot --headless --path . res://examples/dedicated.tscn        # 176 checks, a real DotServer
 godot --headless --path . res://examples/sandbox.tscn          #  68 checks, two real clients
 godot --headless --path . res://examples/content.tscn          #  45 checks, the cloud path
 ```

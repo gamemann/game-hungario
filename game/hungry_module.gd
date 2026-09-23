@@ -8,6 +8,7 @@ const HungryContent := preload("hungry_content.gd")
 const HungryHazards := preload("hungry_hazards.gd")
 const HungryHunters := preload("hungry_hunters.gd")
 const HungryMaps := preload("hungry_maps.gd")
+const HungryModTools := preload("hungry_mod_tools.gd")
 const HungryMonster := preload("hungry_monster.gd")
 const HungryNetBridge := preload("net/hungry_net_bridge.gd")
 const HungryProgress := preload("hungry_progress.gd")
@@ -65,6 +66,12 @@ var loadouts: DotLoadoutManager = null
 ## the people connected rather than about the arena — a game change frees the world and
 ## these have to survive it, exactly as the netcode manager does.
 var services: HungryServices = null
+
+## dot-moderation's live tools with this game's verbs (`HungryModTools`), and their
+## commands. Built here rather than in the services layer because the world they act on is
+## replaced by a game change and this module is what knows the current one.
+var mod_tools: DotModTools = null
+var mod_commands: DotModToolCommands = null
 
 ## NPC monsters, and the director that decides when they arrive.
 var hunters: HungryHunters = null
@@ -362,7 +369,45 @@ func _build_services() -> DotResult:
 	# still be attributed to somebody.
 	services.chat.message_accepted.connect(_on_chat_accepted)
 
+	_build_mod_tools()
+
 	return DotResult.success(null)
+
+
+func _build_mod_tools() -> void:
+	var world_fn := func() -> HungryWorld: return world
+
+	mod_tools = DotModTools.new()
+	mod_tools.name = "ModTools"
+	mod_tools.register_service = false
+	mod_tools.manager = services.moderation
+	mod_tools.immunity_fn = func(id: StringName) -> int:
+		var session := server.session_by_userid(String(id).to_int()) if String(id).is_valid_int() else null
+		return session.immunity if session != null else 0
+	mod_tools.position_fn = func(id: StringName) -> Variant:
+		return HungryModTools.position_of(world_fn, id)
+	mod_tools.teleport_fn = func(id: StringName, to: Variant) -> void:
+		HungryModTools.teleport(world_fn, id, to)
+	# A monster's stand-off is its radius, not a person's arm's length: a moderator who
+	# goes to a big one lands inside it at 1.5.
+	mod_tools.goto_standoff = 120.0
+
+	var table := HungryModTools.handlers(world_fn)
+	for action: Variant in table:
+		mod_tools.handlers[action] = table[action]
+
+	var refusals := HungryModTools.unsupported()
+	for action: Variant in refusals:
+		mod_tools.unsupported_reasons[action] = refusals[action]
+
+	add_child(mod_tools)
+
+	mod_commands = DotModToolCommands.install(self, mod_tools, server)
+	mod_commands.alive_fn = func(id: StringName) -> bool:
+		var monster := world.monster_for(String(id).to_int()) if world != null else null
+		return monster != null and monster.alive
+	mod_commands.items_fn = func() -> PackedStringArray:
+		return HungryModTools.item_ids(world_fn)
 
 
 func _build_combat() -> DotResult:
@@ -932,6 +977,9 @@ func _on_client_disconnected(session: DotClientSession, _reason: String) -> void
 	if services != null:
 		services.chat.leave_notice(session.peer_id, HungryServices.CHANNEL_ALL)
 		services.remove_peer(session.peer_id)
+
+	if mod_tools != null:
+		mod_tools.forget(StringName(str(session.userid)))
 
 	if maps != null and maps.director != null:
 		# The vote forgets them, or a rock-the-vote threshold counts a ballot from

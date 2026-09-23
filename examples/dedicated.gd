@@ -88,6 +88,7 @@ func _run() -> void:
 		_test_netcode()
 		_test_services()
 		await _test_moderation()
+		await _test_live_tools()
 		_test_combat()
 		_test_hunters()
 		_test_hazards()
@@ -917,6 +918,81 @@ func _test_moderation() -> void:
 	)
 	reloaded.queue_free()
 	_done()
+
+
+## dot-moderation's live tools, as an operator types them, against a monster that joined
+## the way a client's does. The subset this game supports acts on the world; the rest is
+## refused with the reason `HungryModTools` gives.
+func _test_live_tools() -> void:
+	_section("the moderator's live tools")
+
+	_check(
+		_server.console.find_command("slay") != null and _server.console.find_command("noclip") != null,
+		"the live tools' commands are on the console"
+	)
+
+	var session := DotClientSession.new()
+	session.peer_id = 3131
+	session.userid = 313
+	session.display_name = "Chomp"
+	var _adopted := _server.adopt_session(session)
+	_server.events.fire("client_spawn", {"userid": 313, "name": "Chomp"})
+
+	var world := _world()
+	var monster := world.monster_for(313)
+	_check(monster != null, "a player joins as a monster")
+
+	if monster == null:
+		for what in ["slay", "respawn", "give", "refusal", "rename"]:
+			_check(false, what)
+		_done()
+		return
+
+	if monster.piece_count() == 0:
+		world.spawn(313)
+		monster.alive = true
+
+	var slain := await _live("slay Chomp")
+	_check(monster.piece_count() == 0 and not monster.alive,
+		"`slay Chomp` devours every piece, the world's own death", " | ".join(slain))
+
+	var back := await _live("respawn Chomp")
+	_check(monster.piece_count() > 0 and monster.alive,
+		"`respawn Chomp` puts them back at a safe spawn", " | ".join(back))
+
+	var item := String(world.items.ids()[0]) if world.items != null and not world.items.ids().is_empty() else "pepper"
+	monster.carried.clear()
+	var given := await _live("give Chomp %s" % item)
+	_check(monster.carried.has(StringName(item)), "`give Chomp %s` puts it in their hands" % item,
+		" | ".join(given))
+
+	var refused := await _live("noclip Chomp")
+	_check(_said_any(refused, "rubber-band"), "`noclip` is refused, and says it would rubber-band",
+		" | ".join(refused))
+
+	var _renamed := await _live("rename Chomp Nibbles")
+	_check(monster.display_name == "Nibbles" and session.display_name == "Nibbles",
+		"`rename` reaches the monster and the session")
+
+	var _released := _server.release_session(session.peer_id)
+	_done()
+
+
+func _live(line: String) -> PackedStringArray:
+	var captured: Array[String] = []
+	var context := DotCmdContext.console("", PackedStringArray())
+	context.reply_sink = func(text: String) -> void: captured.append(text)
+	_server.console.execute(line, context)
+	await get_tree().process_frame
+	await get_tree().process_frame
+	return PackedStringArray(captured)
+
+
+func _said_any(lines: PackedStringArray, text: String) -> bool:
+	for line in lines:
+		if line.findn(text) >= 0:
+			return true
+	return false
 
 
 ## What a throwable does, through dot-combat rather than through a constant.
