@@ -145,7 +145,7 @@ godot --headless --path . res://examples/headless_round.tscn   # 286 checks, the
 godot --headless --path . res://examples/headless_net.tscn     # 149 checks, the netcode
 godot --headless --path . res://examples/dedicated.tscn        # 202 checks, a real DotServer
 godot --headless --path . res://examples/headless_presentation.tscn  # 70 checks, the client half
-godot --headless --path . res://examples/sandbox.tscn          #  97 checks, two real clients
+godot --headless --path . res://examples/sandbox.tscn          #  99 checks, two real clients
 godot --headless --path . res://examples/content.tscn          #  46 checks, the cloud path
 ```
 

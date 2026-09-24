@@ -300,6 +300,15 @@ func _module_game_changed(content_key: String) -> void:
 
 	_watch_spawns(world)
 
+	# The moderator's return history goes too, for everybody. Every position in it is a point
+	# in the arena that was just freed, so `return <player>` after a change put them where
+	# they had stood in a different mode — inside a rock of the reef, or past the edge of a
+	# smaller arena. [method DotModTools.respawned] keeps the history on purpose, because a
+	# respawn in the same arena leaves a return meaningful; a game change is the one case
+	# where none of it can be, and that includes players who left before the change.
+	if mod_tools != null:
+		mod_tools.clear_history()
+
 	if combat != null:
 		world.damage_gate = combat.gate
 

@@ -38,7 +38,7 @@ const SCOPE_KEY := "user://hungry_sandbox_scope.key"
 const SERVER_DIR := "user://hungry_sandbox_server"
 
 ## Every check this suite runs. See the guard at the end of [method _run].
-const CHECKS := 97
+const CHECKS := 99
 
 var _passed := 0
 var _failed := 0
@@ -1125,6 +1125,14 @@ func _test_game_change() -> void:
 	var mine := _client.bridge.local_player_id
 	var before_world := module.world
 
+	# Moved once by a moderator, so `return` has somewhere to put this player — a position in
+	# THIS arena, which the change is about to free.
+	var who := StringName(str(mine))
+	var here: Variant = module.mod_tools.position_fn.call(who)
+	var _moved: DotResult = await module.mod_tools.teleport(&"", who,
+		(here as Vector2) + Vector2(40.0, 0.0) if here is Vector2 else Vector2.ZERO)
+	_check(module.mod_tools.can_return(who), "a moderator moves the player, so `return` has somewhere to put them")
+
 	# [b]To the reef, not to frenzy, since the lagoon.[/b] Frenzy is an empty square, so
 	# this change had only ever proved that a connected client follows a new SIZE and a
 	# new SEED; a mode with rocks in it adds the one thing a client derives rather than
@@ -1185,6 +1193,13 @@ func _test_game_change() -> void:
 	, 10.0)
 
 	_check(back_in, "and is playing again without reconnecting")
+
+	var returned: DotResult = await module.mod_tools.return_player(&"", who)
+	_check(
+		not module.mod_tools.can_return(who) and not returned.ok,
+		"and `return` has nowhere to put them, rather than a spot in the arena that is gone",
+		"it put them at %s, a position from the previous mode" % str(returned.value) if returned.ok else ""
+	)
 	_done()
 
 

@@ -21,7 +21,7 @@ dot-moderation's live tools are here (`HungryModTools`, built in the module beca
 
 **Noclip, freeze and speed change how a monster moves, so they go through the state the client predicts**: dot-2d's `Dot2DAdminModifiers`, kept per monster in `HungryMonster.admin` (authority-only, like `effects`) and written into every piece's `Dot2DState.admin` each tick, which `HungryPieceNet` replicates as `net_admin`. A server that changed how a monster moves without the owning client knowing would have that client predict something else and be corrected on every snapshot — rubber-banding — and `headless_net` keeps that as a negative control: a forced noclip through a rock stays within 2 units of the server for 90 ticks, and the same move with the rock removed from the server's world only is 82 units out. Noclip is the rocks not being there (`block_piece` skips them, inside the function a client's replay runs) and not the arena's edge; a freeze also refuses a split, a throw and an eject, which are movement by another route. `sandbox` repeats both over a real socket.
 
-**A spawn tells dot-moderation**, off `HungryWorld.player_spawned` (`_watch_spawns`, re-wired on a game change), so a respawn switches noclip and freeze off through the handlers. The bits live on the monster, which outlives its pieces; without the hook they would ride it into the next life.
+**A spawn tells dot-moderation**, off `HungryWorld.player_spawned` (`_watch_spawns`, re-wired on a game change), so a respawn switches noclip and freeze off through the handlers. The bits live on the monster, which outlives its pieces; without the hook they would ride it into the next life. **A game change clears the return history, for everybody** (`_module_game_changed`, 2026-09-24, nightly): `respawned` keeps it on purpose, and after a change every position in it is a point in the arena that was freed, so `return <player>` put them where they had stood in the previous mode — the lobby's bug (cb822cd), in this game too. `sandbox`'s game change moves the player before changing to the reef and asserts `return` has nowhere to put them after; armed by removing the clear, it reported them returned to (-1846, -1928) in the previous mode.
 
 **Found on the way, and fixed in dot-net since (f99fde3, 2026-09-24):** a predicted piece the server held still was never pulled back. The mechanism was not the one first written here — a snapshot did carry the entity, with an empty body, and the client filled the reconcile values from its own prediction, so "nothing new" was adopted as "you are right" and the lead replayed twice (113 units away in the naive freeze control, and climbing). dot-net rewinds to the server's whole state now, and the control (c968108) asserts the rubber band a server-only freeze should produce: a 1.9 to 9.4 unit sawtooth whose floor does not climb. The shipped freeze never met the bug, because the admin bit changing is what reaches the client.
 
@@ -702,12 +702,12 @@ godot --headless --path . res://examples/headless_round.tscn   # 317 — the gam
 godot --headless --path . res://examples/headless_stack.tscn   #  24 checks
 godot --headless --path . res://examples/headless_net.tscn     # 158 — the netcode
 godot --headless --path . res://examples/dedicated.tscn        # 202 — a real DotServer
-godot --headless --path . res://examples/sandbox.tscn          #  97 — two real clients
+godot --headless --path . res://examples/sandbox.tscn          #  99 — two real clients
 godot --headless --path . res://examples/content.tscn          #  46 — the cloud path
 godot --headless --path . res://examples/headless_presentation.tscn  # 70 — the client half
 ```
 
-914 checks across seven suites. Every one of them has a section counter and a CHECKS total; `sandbox` and `content` were the last two with only the counter, and got theirs on 2026-09-24 (each armed: CHECKS raised by one, exit 1). Add `-- --verbose` to `dedicated`, `sandbox` or `content` when one fails and
+916 checks across seven suites. Every one of them has a section counter and a CHECKS total; `sandbox` and `content` were the last two with only the counter, and got theirs on 2026-09-24 (each armed: CHECKS raised by one, exit 1). Add `-- --verbose` to `dedicated`, `sandbox` or `content` when one fails and
 the reason is in a log line rather than in the assertion.
 
 **Run `headless_round` after any change to dot-2d** and **`headless_net` after any change
