@@ -32,6 +32,10 @@ var _at := 0
 var _wait := SETTLE
 var _finished := false
 
+## Where the player is put, and whether [method _boot] has run. See [method _process].
+var _stand_at := Vector2.INF
+var _booted := false
+
 
 func _initialize() -> void:
 	DotLog.set_level(DotLog.Level.ERROR)
@@ -73,6 +77,38 @@ func _initialize() -> void:
 		quit(1)
 		return
 
+	_stand_at = at
+
+	# [b]Everything past this point waits for the first frame.[/b] `setup()` adds the
+	# world's `DotMatch` as a child, and a node added from `SceneTree._initialize` does not
+	# get `_ready` until the tree's first iteration — the root is not inside the tree yet —
+	# so the match has built no scoreboard, and starting it, adding a player and ticking
+	# died on four "Nonexistent function ... in base 'Nil'" errors at every startup. They
+	# read like missing methods rather than like a node that had not started, and the
+	# frames still came out because the world limped on without a match.
+	# `tools/screenshot_menus.gd` seeds its monsters on the first frame for the same reason.
+
+	# [b]Three framings, because the level is three different claims.[/b] The whole arena
+	# says the shape reads; a player's own view says the scale does — a gate is only a gate
+	# if it looks like one from where a player sits — and the grown view is the one that
+	# says the mode still draws when the camera has zoomed out, which is the framing
+	# nothing in this project had ever rendered.
+	_shots = [
+		{"name": "%s%s_arena" % [wanted, tag], "mass": 0.0, "whole": true},
+		{"name": "%s%s_gate" % [wanted, tag], "mass": 0.0, "whole": false},
+		{"name": "%s%s_grown" % [wanted, tag], "mass": preset.win_mass * 0.55, "whole": false},
+		# The countdown before a mode-vote ballot, under the round clock, with the chat line
+		# that announced it in the feed beside it — the two have to read as one thing and
+		# neither may sit on the other.
+		{"name": "%s%s_vote" % [wanted, tag], "mass": 0.0, "whole": false, "vote": true},
+	]
+
+
+## The half of the setup that needs the world's nodes to have had `_ready`: see the note
+## at the end of [method _initialize].
+func _boot() -> void:
+	var at := _stand_at
+
 	_world.start(0)
 
 	# Live, then a player in it. A world that has not reached LIVE throws the arrangement
@@ -99,11 +135,6 @@ func _initialize() -> void:
 	root.add_child(_renderer)
 	_renderer.bind(_world, _camera, 1)
 
-	# [b]Three framings, because the level is three different claims.[/b] The whole arena
-	# says the shape reads; a player's own view says the scale does — a gate is only a gate
-	# if it looks like one from where a player sits — and the grown view is the one that
-	# says the mode still draws when the camera has zoomed out, which is the framing
-	# nothing in this project had ever rendered.
 	# The HUD, for the last frame only: the level frames are about the level. On a canvas
 	# layer, as the client has it, or the camera would carry it off the screen.
 	var layer := CanvasLayer.new()
@@ -116,19 +147,16 @@ func _initialize() -> void:
 	_hud.build(_world, null, 1)
 	_hud.visible = false
 
-	_shots = [
-		{"name": "%s%s_arena" % [wanted, tag], "mass": 0.0, "whole": true},
-		{"name": "%s%s_gate" % [wanted, tag], "mass": 0.0, "whole": false},
-		{"name": "%s%s_grown" % [wanted, tag], "mass": preset.win_mass * 0.55, "whole": false},
-		# The countdown before a mode-vote ballot, under the round clock, with the chat line
-		# that announced it in the feed beside it — the two have to read as one thing and
-		# neither may sit on the other.
-		{"name": "%s%s_vote" % [wanted, tag], "mass": 0.0, "whole": false, "vote": true},
-	]
-
 
 func _process(_delta: float) -> bool:
 	if _finished:
+		return false
+
+	# The first frame is the first moment every node added in `_initialize` has had
+	# `_ready`, so it is spent booting rather than on a shot.
+	if not _booted:
+		_booted = true
+		_boot()
 		return false
 
 	if _at >= _shots.size():
@@ -152,7 +180,16 @@ func _process(_delta: float) -> bool:
 			_camera.clamp_to_arena = false
 			_camera.follow_sec = 0.0
 			_camera.monster_source = Callable()
-			_camera.global_position = _world.arena.bounds.get_center()
+			# And the rig's anchor pinned to the middle, through the spectating seam. Setting
+			# the camera's position alone is undone on the next frame by the rig following
+			# its anchor, which is still wherever the player stands — and this frame only
+			# ever came out centred because the anchor used to be at the origin, where the
+			# arena's centre also is, while the four startup errors (see `_initialize`)
+			# kept the player from existing. With a live match the player is put at 0.36 of the height and the
+			# whole-arena frame came out cropped by a third.
+			var middle := _world.arena.bounds.get_center()
+			_camera.position_source = func() -> Variant: return middle
+			_camera.global_position = middle
 
 			var fit := (
 				root.get_visible_rect().size / (_world.arena.bounds.size * 1.04)
@@ -162,9 +199,18 @@ func _process(_delta: float) -> bool:
 			_camera.zoom_with_size = true
 			_camera.clamp_to_arena = true
 			_camera.monster_source = func() -> Object: return _world.monster_for(1)
+			_camera.position_source = Callable()
+			# The zoom snapped rather than eased. At `zoom_sec` 0.45 against four frames
+			# the gate and grown frames both came out at whatever zoom the ease had reached
+			# from the whole-arena one — nearly the same zoom, so the grown frame did not
+			# show the zoomed-out view it exists to show.
+			_camera.zoom_sec = 0.0
 
 		if shot.has("vote"):
 			_hud.visible = true
+			# The client refreshes the board on its own cadence (`HungryClient`), not the
+			# HUD, so without this the frame drew a board with its header and no rows.
+			_hud.refresh_leaderboard()
 			_hud.say("A vote for what plays next starts in 5s.", Color(0.62, 0.78, 1.0))
 			_hud.vote_countdown(4, false)
 
