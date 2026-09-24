@@ -351,6 +351,8 @@ the replayed ones differ by a fraction of the overlap, and the correction is eas
 Once the pieces are apart, separation does nothing at all and the two agree exactly, which
 is every other moment of the game.
 
+**And against a rock, measured over the wire (`[warren-net-1]`, 2026-09-24).** `headless_net`'s **a round of warrens** rebinds the server onto a real `warrens` world, has the client build it from the name in the hello, and presses the client's own monster dead against a ring rock for 150 ticks, comparing where the client predicted it with where the server had it at the same tick: on the 138 ticks in contact the mean gap is **0.20** units. With the rock taken out of the client's world only, the same window is **3.72** — corrected on every snapshot — which is the control that says the first number means something (over the whole window the two read 3.6 and 7.5, too close to call, which is why the check is on the ticks in contact). A monster that splits against the face is the `_separate` cost above, measured: up to **14.4** units for 5 ticks while the halves overlap, 0.5 once they are apart.
+
 **`receive_snapshot` must not reconcile.** `DotNetManager.receive_snapshot` already routes
 a predicted entity's state to the predictor and acknowledges the inputs it covers; a
 second pass replays the same inputs against values that were already rewound.
@@ -622,7 +624,7 @@ suspending section called without `await`.
 
 Anything that returns early has to call `_done()` before returning.
 
-**The leak report at exit is not a leak in this code.** `dedicated` and `sandbox` print
+**The leak report at exit was not a leak in this code** *(and neither `dedicated` nor `sandbox` prints one any more as of 2026-09-24 — see "No message preloads itself")*. `dedicated` and `sandbox` printed
 "ObjectDB instances leaked" with a list of `GDScriptNativeClass` and `GDScript` entries.
 Those are the engine's script cache with several hundred scripts loaded, and dot-platform's
 sandbox prints the same. A real cycle would name a node or a `RefCounted` of this project's
@@ -698,14 +700,14 @@ done
 
 godot --headless --path . res://examples/headless_round.tscn   # 317 — the game
 godot --headless --path . res://examples/headless_stack.tscn   #  24 checks
-godot --headless --path . res://examples/headless_net.tscn     # 149 — the netcode
+godot --headless --path . res://examples/headless_net.tscn     # 158 — the netcode
 godot --headless --path . res://examples/dedicated.tscn        # 202 — a real DotServer
 godot --headless --path . res://examples/sandbox.tscn          #  97 — two real clients
 godot --headless --path . res://examples/content.tscn          #  46 — the cloud path
 godot --headless --path . res://examples/headless_presentation.tscn  # 70 — the client half
 ```
 
-865 checks across seven suites. Every one of them has a section counter and a CHECKS total; `sandbox` and `content` were the last two with only the counter, and got theirs on 2026-09-24 (each armed: CHECKS raised by one, exit 1). Add `-- --verbose` to `dedicated`, `sandbox` or `content` when one fails and
+914 checks across seven suites. Every one of them has a section counter and a CHECKS total; `sandbox` and `content` were the last two with only the counter, and got theirs on 2026-09-24 (each armed: CHECKS raised by one, exit 1). Add `-- --verbose` to `dedicated`, `sandbox` or `content` when one fails and
 the reason is in a log line rather than in the assertion.
 
 **Run `headless_round` after any change to dot-2d** and **`headless_net` after any change
@@ -896,7 +898,7 @@ What a player loses is the Enter key, and it is one setting away.
 
 `dedicated`'s last section, **exiting clean**, reads every `DotNetMessage` script under `game/` as text and fails on a self-preload. It is on the source deliberately: the leak is printed by the engine after `quit()`, where no assertion can reach.
 
-**Here it was not the cause, and `[leak-1]` is still open.** Exactly the same exit warnings before the change as after (2026-09-23): `dedicated` 69 ObjectDB instances and 10 resources; `sandbox` 379 and 295 plus a VariantPools page; `content` clean both times. `dedicated`'s count is too small to be the whole script graph; `sandbox`'s is that shape.
+**Here it was not the cause; `[leak-1]` is closed all the same.** Exactly the same exit warnings before the change as after (2026-09-23): `dedicated` 69 ObjectDB instances and 10 resources; `sandbox` 379 and 295 plus a VariantPools page. By 2026-09-24 both exit with no leak warning at all (11c1fa6 and the commits around it), and `dedicated`'s **exiting clean, as a second process saw it** asserts it by running the suite again in a fresh process and reading its exit. `sandbox` has no such probe; it is clean by observation. `headless_presentation` still prints 8 ObjectDB instances at exit, unchanged by anything on 2026-09-24.
 
 ## Things deliberately not here
 

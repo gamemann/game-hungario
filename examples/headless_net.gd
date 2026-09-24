@@ -36,7 +36,7 @@ const SNAPSHOT_RATE := 20
 const SEED := 20260828
 const CLIENT_PEER := 2
 
-const CHECKS := 149
+const CHECKS := 158
 
 var _passed := 0
 var _failed := 0
@@ -90,6 +90,7 @@ func _run() -> void:
 		_test_vote_wire()
 		_test_loss()
 		_test_game_change()
+		_test_warrens_rock_converges()
 
 	_teardown()
 
@@ -1720,3 +1721,229 @@ func _test_game_change() -> void:
 	remove_child(next)
 	next.queue_free()
 	_done()
+
+
+## [warren-net-1]: a round of `warrens`, and a client predicting itself against one of its
+## rocks.
+##
+## [b]The half of the layout no single-world check can see.[/b] `headless_round` proves a
+## client world pushes itself out of the same rocks (`simulate_piece` runs `block_piece`),
+## and the admin section above proves a noclip is predicted through a stand-in rock. What
+## neither does is the thing a player meets: the server changed to a level, the client
+## built the level from the name in the hello, and the client's own monster pressed
+## against a rock face for seconds, reconciled against every snapshot. A push-out that the
+## replay did not repeat — or a client whose layout differed by one disc — reads as
+## rubber-banding along the face, which sends the next person to the netcode.
+##
+## [b]And its negative control.[/b] The same window with the rock missing from the CLIENT
+## only must come apart, or the first half passes because nothing was ever asked to
+## disagree.
+##
+## [b]A split monster against the rock is measured and bounded, not held to the same
+## number.[/b] `_separate` is applied live on both ends and not replayed, so while two
+## pieces overlap the replay and the shown positions differ by a fraction of the overlap;
+## that is the named cost in CLAUDE.md, and this is where its size is written down.
+func _test_warrens_rock_converges() -> void:
+	_section("a round of warrens: a client predicting itself against a rock")
+
+	var warrens := HungryWorld.new()
+	warrens.name = "WarrensWorld"
+	warrens.preset = HungryPreset.warrens()
+	warrens.tick_rate = TICK_RATE
+	warrens.world_seed = SEED + 2
+	warrens.is_authority = true
+	warrens.register_service = false
+	add_child(warrens)
+	warrens.setup()
+	warrens.start(_tick)
+
+	var rebound := _server_bridge.rebind(warrens)
+
+	if not _check(rebound.ok, "the bridge rebinds onto a warrens world", str(rebound.error)):
+		remove_child(warrens)
+		warrens.queue_free()
+		_done()
+		return
+
+	_flush()
+
+	for _i in range(TICK_RATE * 10):
+		if warrens.match_node.is_live():
+			break
+		_step()
+
+	_steps(20)
+
+	_check(
+		_client_world.layout.id == HungryLayout.WARRENS
+			and _client_world.layout.count() == warrens.layout.count(),
+		"the client built the warrens from the name in the hello",
+		"%s, %d rocks against %d" % [
+			_client_world.layout.id, _client_world.layout.count(), warrens.layout.count()
+		]
+	)
+
+	var monster := warrens.monster_for(7)
+
+	if not _check(monster != null and monster.alive, "and player 7 is alive in it"):
+		_server_bridge.rebind(_server_world)
+		remove_child(warrens)
+		warrens.queue_free()
+		_done()
+		return
+
+	# Outside ring rock 0, driven dead at its centre: pressed against the face for the whole
+	# window. Four degrees off, which the round suite uses to prove a monster slides in,
+	# leaves the face after 41 ticks here, and a window mostly spent in the open measures
+	# the open.
+	var rock: Vector3 = warrens.layout.blocks[0]
+	var rock_at := Vector2(rock.x, rock.y)
+	var centre := warrens.arena.bounds.get_center()
+	# Sixty units off the face, so the window is spent pressed rather than approaching.
+	var start := rock_at + (rock_at - centre).normalized() * (rock.z + 60.0)
+	var command := Dot2DCommand.new()
+	command.aim = (rock_at - start).normalized()
+	command.reach = 900.0
+
+	_put(warrens, start)
+	var pressed := _rock_window(warrens, 150, command, rock)
+	print("  measured: against a rock, worst %.2f over %d ticks; %d in contact, worst %.2f and mean %.2f there; deepest %.2f" % [
+		float(pressed["worst"]), int(pressed["ticks"]), int(pressed["contact"]),
+		float(pressed["contact_worst"]), float(pressed["contact_mean"]), float(pressed["deepest"])
+	])
+	_check(
+		int(pressed["contact"]) > 100,
+		"the monster spent the window pressed against the rock",
+		"%d ticks in contact" % int(pressed["contact"])
+	)
+	_check(
+		float(pressed["deepest"]) > -2.0,
+		"the server never let it into the rock",
+		"deepest %.2f" % float(pressed["deepest"])
+	)
+	# [b]On the ticks in contact, because that is where a push-out that was not replayed
+	# would show.[/b] Over the whole window both this and the control below are bounded by
+	# the snapshot corrections — 3.6 and 7.5 units when this was first measured, too close
+	# to call — while pressed against the face the replay either agrees with the server to
+	# a rounding error or is corrected on every snapshot.
+	_check(
+		float(pressed["contact_mean"]) < 1.0,
+		"and while it was pressed there the client agreed with the server to within a unit",
+		"worst %.2f, mean %.2f in contact; %.2f over the whole window"
+			% [float(pressed["contact_worst"]), float(pressed["contact_mean"]), float(pressed["worst"])]
+	)
+
+	# The negative control: the rock gone from the client's world only.
+	_put(warrens, start)
+	_client_world.layout = HungryLayout.none()
+	var naive := _rock_window(warrens, 150, command, rock)
+	_client_world.adopt_layout(HungryLayout.WARRENS)
+	print("  measured: the rock missing from the client, %d in contact, worst %.2f and mean %.2f there" % [
+		int(naive["contact"]), float(naive["contact_worst"]), float(naive["contact_mean"])
+	])
+	_check(
+		float(naive["contact_mean"]) > 2.0
+			and float(naive["contact_mean"]) > float(pressed["contact_mean"]) * 4.0 + 0.5,
+		"a client that does not know the rock is corrected all along its face",
+		"naive mean %.2f in contact against %.2f — if this passes quietly, the check above proves nothing"
+			% [float(naive["contact_mean"]), float(pressed["contact_mean"])]
+	)
+
+	# Split against the face: the pieces overlap, and `_separate` is not replayed.
+	_put(warrens, start)
+	warrens.feed_player(7, 200.0)
+	_steps(10)
+	var split := Dot2DCommand.new()
+	split.aim = command.aim
+	split.reach = command.reach
+	split.buttons = Dot2DCommand.BUTTON_SPLIT
+	_step(split)
+	var halves := _rock_window(warrens, 120, command, rock)
+	print("  measured: split against the rock, %d pieces, worst %.2f (%d ticks over 8), last %.2f" % [
+		warrens.monster_for(7).piece_count(), float(halves["worst"]), int(halves["over"]),
+		float(halves["final"])
+	])
+	_check(
+		warrens.monster_for(7).piece_count() >= 2,
+		"a monster that splits against the rock is in pieces",
+		"%d" % warrens.monster_for(7).piece_count()
+	)
+	_check(
+		float(halves["final"]) < 8.0,
+		"and its client comes back to the server once the pieces are apart",
+		"worst %.2f on the way, %.2f at the end" % [float(halves["worst"]), float(halves["final"])]
+	)
+
+	# Back onto the world every later line of this file expects.
+	_server_bridge.rebind(_server_world)
+	_flush()
+	remove_child(warrens)
+	warrens.queue_free()
+	_done()
+
+
+## Puts monster 7 at [param at] in [param world], still, and lets both ends agree.
+func _put(world: HungryWorld, at: Vector2) -> void:
+	for piece in world.monster_for(7).pieces:
+		piece.state.position = at
+		piece.state.velocity = Vector2.ZERO
+	_steps(30)
+
+
+## [method _admin_window] against a named world and a rock: where the client predicted
+## monster 7 at each tick against where [param world] had it at the SAME tick, and how many
+## ticks the server's monster spent touching [param rock].
+func _rock_window(world: HungryWorld, ticks: int, command: Dot2DCommand, rock: Vector3) -> Dictionary:
+	var client_at := {}
+	var server_at := {}
+	var contact := 0
+	var deepest := INF
+	var at := Vector2(rock.x, rock.y)
+	var touching := {}
+
+	for _i in range(ticks):
+		_tick += 1
+		_server_bridge.server_tick(_tick)
+		server_at[_tick] = world.monster_for(7).centre()
+
+		for piece in world.monster_for(7).pieces:
+			var gap := piece.position().distance_to(at) - rock.z - piece.radius()
+			deepest = minf(deepest, gap)
+
+			if gap < 1.0:
+				contact += 1
+				touching[_tick] = true
+				break
+
+		_flush()
+		_client_bridge.client_tick(_tick + INPUT_LEAD, command)
+		client_at[_tick + INPUT_LEAD] = _client_world.monster_for(7).centre()
+		_flush()
+
+	var worst := 0.0
+	var over := 0
+	var final := 0.0
+	var measured := 0
+	var contact_worst := 0.0
+	var contact_sum := 0.0
+	var contact_measured := 0
+
+	for tick in server_at:
+		if not client_at.has(tick):
+			continue
+		var gap: float = (client_at[tick] as Vector2).distance_to(server_at[tick] as Vector2)
+		worst = maxf(worst, gap)
+		final = gap
+		measured += 1
+		if gap > 8.0:
+			over += 1
+		if touching.has(tick):
+			contact_worst = maxf(contact_worst, gap)
+			contact_sum += gap
+			contact_measured += 1
+
+	return {
+		"worst": worst, "over": over, "final": final, "ticks": measured,
+		"contact": contact, "deepest": deepest, "contact_worst": contact_worst,
+		"contact_mean": contact_sum / float(maxi(1, contact_measured)),
+	}
