@@ -1,6 +1,7 @@
 @tool
 extends DotHud
 
+const HungryBeacon := preload("hungry_beacon.gd")
 const HungryContent := preload("../hungry_content.gd")
 const HungryEvents := preload("../net/hungry_events.gd")
 const HungryField := preload("../hungry_field.gd")
@@ -48,6 +49,25 @@ var minimap: Minimap = null
 
 ## The on-screen split and throw buttons, on a device that wants them.
 var touch: HungryTouch = null
+
+## An administrator's `blind`, over the arena and under the rest of the HUD.
+##
+## [b]Under the widgets, on purpose.[/b] A blind takes the game away, not the player's
+## bearings: the clock, the feed, their own mass and the chat box still say the round is
+## going on and that they are in it, which is what makes it read as "an admin did this"
+## rather than as a client that stopped drawing. [b]The minimap is the exception and goes
+## under it[/b]: it is the arena in miniature, every monster's position on one square, and
+## a blind that left it showing would be a blind a player could play straight through.
+##
+## Black rather than white. A white screen at full brightness is a thing a player can be
+## hurt by in a dark room, and taking the picture away is the whole of the point.
+var blind_overlay: ColorRect = null
+
+## Seconds a blind takes to come down and to lift. Short, so it is unmistakably on, and
+## not instant, so it reads as something done to the screen rather than a frame dropped.
+const BLIND_FADE_SEC := 0.25
+
+const BLIND_COLOUR := Color(0.01, 0.01, 0.015)
 
 ## When [member vote_label] stops showing its last second, in [method Time.get_ticks_msec].
 var _vote_until_msec: int = 0
@@ -126,6 +146,15 @@ class Minimap extends Control:
 
 			draw_circle(local, dot, colour)
 
+			# An administrator's beacon, on the minimap as well as in the arena: the map is
+			# where a player looks to find somebody, which is the beacon's whole job. A
+			# ring that grows once a second, in the beacon's own colour.
+			if monster.beacon:
+				var t := fmod(Time.get_ticks_msec() / 1000.0, HungryBeacon.PERIOD_SEC) \
+					/ HungryBeacon.PERIOD_SEC
+				draw_arc(local, dot + 3.0 + 6.0 * t, 0.0, TAU, 20,
+					Color(HungryBeacon.COLOUR, 1.0 - 0.7 * t), 2.0)
+
 			# A split monster is drawn as a ring around its centroid, so a player can see
 			# at a glance that the thing chasing them is in pieces.
 			if monster.piece_count() > 1:
@@ -140,6 +169,20 @@ func build(p_world: HungryWorld, p_bridge: HungryNetBridge, p_player_id: int) ->
 	world = p_world
 	bridge = p_bridge
 	player_id = p_player_id
+
+	# First, so every widget added below draws over it. See [member blind_overlay].
+	blind_overlay = ColorRect.new()
+	blind_overlay.name = "Blind"
+	blind_overlay.color = BLIND_COLOUR
+	# Not anchored to this HUD's rect: `DotHud` insets itself by the safe area, and a
+	# blind the size of the HUD leaves a frame of the arena showing round the edge — which
+	# game-arena's first rendered blind did. Sized to the whole viewport in
+	# [method present_blind] instead.
+	blind_overlay.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	blind_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	blind_overlay.modulate.a = 0.0
+	blind_overlay.visible = false
+	add_child(blind_overlay)
 
 	mass_bar = DotStatBar.new()
 	mass_bar.name = "Mass"
@@ -207,6 +250,8 @@ func build(p_world: HungryWorld, p_bridge: HungryNetBridge, p_player_id: int) ->
 	minimap.offset_right = -20.0
 	minimap.offset_bottom = -20.0
 	add_child(minimap)
+	# Under the blind, which is the first child. See [member blind_overlay].
+	move_child(minimap, 0)
 
 	clock_label = Label.new()
 	clock_label.name = "Clock"
@@ -382,14 +427,43 @@ func refresh_leaderboard() -> void:
 	leaderboard.set_rows(rows)
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	if Engine.is_editor_hint() or world == null:
 		return
 
+	present_blind(delta)
 	_refresh_clock()
 	_refresh_vote()
 	_refresh_carry()
 	_refresh_status()
+
+
+## Fades [member blind_overlay] toward whether this player is blinded.
+##
+## Read off the local monster rather than pushed by anybody, because the flag arrives in a
+## snapshot on a networked client and is set directly offline, and a HUD that had to be
+## told would need telling from two places. Public so a check can step it.
+##
+## [b]This player's, not the watched one's, and dead or alive.[/b] A blinded player who is
+## eaten spectates somebody else, and a blind that lifted for that would be a blind any
+## player could end by feeding themselves to the nearest monster.
+func present_blind(delta: float) -> void:
+	if blind_overlay == null:
+		return
+
+	var me := _me()
+	var want := 1.0 if me != null and me.blinded else 0.0
+	blind_overlay.modulate.a = move_toward(
+		blind_overlay.modulate.a, want, maxf(delta, 0.0) / BLIND_FADE_SEC
+	)
+	blind_overlay.visible = blind_overlay.modulate.a > 0.0
+
+	if blind_overlay.visible and is_inside_tree():
+		# The whole viewport, in this HUD's own coordinates — whatever the safe area and
+		# the interface scale did to where this HUD starts.
+		var inverse := get_global_transform().affine_inverse()
+		blind_overlay.position = inverse * Vector2.ZERO
+		blind_overlay.size = inverse.basis_xform(get_viewport_rect().size)
 
 
 func _refresh_clock() -> void:
@@ -477,5 +551,6 @@ func describe() -> Dictionary:
 		"rows": leaderboard.row_count() if leaderboard != null else 0,
 		"feed": feed.line_count() if feed != null else 0,
 		"vote": vote_label.text if vote_label != null else "",
+		"blind": blind_overlay.modulate.a if blind_overlay != null else 0.0,
 		"touch": touch.describe() if touch != null else null,
 	}

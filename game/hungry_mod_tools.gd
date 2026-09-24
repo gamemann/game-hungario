@@ -18,6 +18,11 @@ const HungryMonster := preload("hungry_monster.gd")
 ##   for a whole window without a correction, and shows the same move made the naive way
 ##   (skipping the rocks on the server only) being corrected. Noclip is the rocks not being
 ##   there, not the arena's edge; a freeze also stops a split, a throw and an eject.
+## - [b]blind and beacon[/b] are about a SCREEN rather than a body: one flag each on
+##   [HungryMonster] that `HungryPieceNet` replicates — the blind to its owner alone, the
+##   beacon to everybody — and that the client draws. `HungryHud` blacks the owner's screen
+##   out; `HungryRenderer` rings the monster on every screen and pings. The server decides;
+##   nothing about either is a client's to choose.
 ## - [b]gravity[/b], because there is none in a top-down arena.
 ## - [b]god and buddha[/b], because being eaten is the whole game: a monster nothing can
 ##   eat breaks every round it is in rather than protecting one player.
@@ -109,6 +114,23 @@ static func handlers(world_fn: Callable) -> Dictionary:
 				return _absent(id)
 			monster.display_name = str(args["name"]).strip_edges().substr(0, 32)
 			return DotResult.success(monster.display_name),
+
+		DotModTools.ACTION_BLIND: func(id: StringName, args: Dictionary) -> DotResult:
+			var monster := _monster(world_fn.call(), id)
+			if monster == null:
+				return _absent(id)
+			# The screen and nothing else. A blinded monster still moves, eats and is
+			# eaten; an admin who wants it to stop as well has freeze, and one verb that did
+			# both would be a verb nobody could use for only the first.
+			monster.blinded = bool(args["on"])
+			return DotResult.success(monster.blinded),
+
+		DotModTools.ACTION_BEACON: func(id: StringName, args: Dictionary) -> DotResult:
+			var monster := _monster(world_fn.call(), id)
+			if monster == null:
+				return _absent(id)
+			monster.beacon = bool(args["on"])
+			return DotResult.success(monster.beacon),
 	}
 
 
@@ -120,9 +142,17 @@ static func unsupported() -> Dictionary:
 		DotModTools.ACTION_HEALTH: "a monster has mass, not health",
 		DotModTools.ACTION_SLAP: "a monster has mass, not health, and a shove is a split",
 		DotModTools.ACTION_BURN: "nothing here burns",
-		DotModTools.ACTION_BLIND: "the client draws no overlay a server could turn on",
-		DotModTools.ACTION_BEACON: "the client draws no marker a server could turn on",
 	}
+
+
+## Toggles that outlive a respawn here, beyond dot-moderation's own god and buddha.
+##
+## [b]Blind and beacon are about the person, not the body.[/b] Noclip and freeze end with
+## the monster's pieces because arriving in a fresh life frozen is the respawn broken; a
+## player an admin blinded, or wanted the arena to watch, is still that player after they
+## are eaten — and being eaten is exactly what a player being punished would otherwise
+## use to end it, in a game where being eaten takes no effort at all.
+const PERSIST_ON_RESPAWN: Array[String] = ["blind", "beacon"]
 
 
 static func item_ids(world_fn: Callable) -> PackedStringArray:

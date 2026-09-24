@@ -30,6 +30,9 @@ const CHANNEL := "hungry.presentation"
 
 const FX_DIR := "res://scenes/fx"
 
+## The ping an administrator's beacon makes. See [method sound_catalogue].
+const BEACON_SOUND := &"beacon"
+
 ## Which of the config's keys follow the person rather than the machine.
 ##
 ## The one thing `HungryConfig` cannot say about itself. A camera follow time is about this
@@ -274,6 +277,22 @@ static func sound_catalogue() -> DotAudioCatalogue:
 		cue.max_concurrent = 1
 		cue.priority = 70
 		c.add(cue)
+
+	# An administrator's beacon: a ping once a second from the beaconed monster, heard by
+	# everybody near enough. Positional, so dot-audio's distance cull decides who hears it:
+	# a beacon two screens away is found by the pointer at the edge of the screen, and a
+	# ping from every beacon in the arena at once would be a metronome nobody could place.
+	# Further than a fruit, because the beacon's job is to be found. Under the three that
+	# change everything and under the vote, so it never costs anybody either.
+	var ping := DotAudioDef.new()
+	ping.id = BEACON_SOUND
+	ping.generated = true
+	ping.kind = DotAudioDef.Kind.POSITIONAL_2D
+	ping.bus = &"SFX"
+	ping.max_concurrent = 2
+	ping.priority = 45
+	ping.max_distance = 3200.0
+	c.add(ping)
 
 	return c
 
@@ -588,6 +607,16 @@ func on_vote_cue(id: StringName) -> int:
 		return 0
 
 	return audio.play(id)
+
+
+## A beacon's ripple went out from [param at]. `HungryRenderer.beacon_pulsed`, on every
+## client, for every beaconed monster — the beaconed player's own included, who hears
+## their own. Returns dot-audio's handle, 0 when it was refused or culled.
+func on_beacon(at: Vector2) -> int:
+	if audio == null:
+		return 0
+
+	return audio.play_at_2d(BEACON_SOUND, at)
 
 
 func on_click() -> void:

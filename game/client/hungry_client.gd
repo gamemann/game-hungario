@@ -312,6 +312,10 @@ func _build_view() -> void:
 	# there is only one list — which is the whole argument this game's arena size makes.
 	renderer.hunters = hunters
 	renderer.hazards = hazards
+	# The ping an administrator's beacon makes, wherever its ripple goes out. The renderer
+	# decides WHEN, because it is what advances the ripple; the presentation layer decides
+	# whether it is heard.
+	renderer.beacon_pulsed.connect(_on_beacon_pulsed)
 
 	sampler = HungryInput.measuring(_me_source(), camera)
 	add_child(sampler)
@@ -786,6 +790,11 @@ func _on_monster_burst(player_id: int, by_player: int, _count: int) -> void:
 		return
 	var monster := world.monster_for(player_id) if world != null else null
 	presentation.on_burst(monster.centre() if monster != null else Vector2.ZERO, mine)
+
+
+func _on_beacon_pulsed(_player_id: int, at: Vector2) -> void:
+	if presentation != null:
+		var _handle := presentation.on_beacon(at)
 
 
 func _on_roster_changed(player_id: int) -> void:

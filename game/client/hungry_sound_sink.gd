@@ -7,7 +7,7 @@ const HungryEvents := preload("../net/hungry_events.gd")
 ##
 ## [b]This is the whole shape of hungario's audio integration, and it is deliberately not
 ## "replace `HungrySound` with dot-audio".[/b] This game bakes its entire bank
-## arithmetically at boot — fourteen cues, 22 kHz, no files — and that is the best thing about
+## arithmetically at boot — fifteen cues, 22 kHz, no files — and that is the best thing about
 ## its audio: it ships nothing, it works on every platform, and it is the only game in the
 ## family that makes a noise today. Throwing it away for an addon that names files would
 ## be a strict downgrade.
@@ -47,6 +47,8 @@ const CUES := {
 	HungryEvents.CUE_VOTE_END: HungrySound.Cue.VOTE_END,
 	HungryEvents.CUE_VOTE_WARNING: HungrySound.Cue.VOTE_WARNING,
 	HungryEvents.CUE_VOTE_COUNT: HungrySound.Cue.VOTE_COUNT,
+	# An administrator's beacon. See `HungryPresentation.BEACON_SOUND`.
+	"beacon": HungrySound.Cue.BEACON,
 }
 
 var sound: HungrySound = null

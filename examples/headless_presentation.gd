@@ -8,6 +8,9 @@ const HungrySound := preload("../game/client/hungry_sound.gd")
 const HungrySoundSink := preload("../game/client/hungry_sound_sink.gd")
 const HungryEvents := preload("../game/net/hungry_events.gd")
 const HungryHud := preload("../game/client/hungry_hud.gd")
+const HungryPreset := preload("../game/hungry_preset.gd")
+const HungryRenderer := preload("../game/client/hungry_renderer.gd")
+const HungryWorld := preload("../game/hungry_world.gd")
 
 ## Settings, audio, effects, the console and the private arena.
 ##
@@ -23,7 +26,7 @@ const HungryHud := preload("../game/client/hungry_hud.gd")
 ##
 ## Exits non-zero on any failure.
 
-const CHECKS := 56
+const CHECKS := 70
 
 var _passed := 0
 var _failed := 0
@@ -51,6 +54,7 @@ func _run() -> void:
 	_test_party()
 	_test_chat_box()
 	_test_the_vote_is_heard()
+	_test_blind_and_beacon()
 
 	print("")
 	_check(
@@ -503,4 +507,145 @@ func _test_the_vote_is_heard() -> void:
 		"and not in the feed, whose five lines the count would push the ballot out of"
 	)
 	hud.queue_free()
+	_done()
+
+
+## An administrator's blind and beacon, on the client: what the HUD and the renderer do
+## with the two flags a snapshot sets. Who receives which flag is `headless_net`'s; what it
+## LOOKS like is `tools/screenshot_map.sh <mode> --admin`'s, because a headless viewport is
+## 64 x 64 and nothing here can say anything about a picture.
+func _test_blind_and_beacon() -> void:
+	_section("An admin's blind covers the screen, and a beacon rings and pings once a second")
+
+	var world := HungryWorld.new()
+	world.name = "AdminWorld"
+	world.preset = HungryPreset.classic()
+	world.tick_rate = 60
+	world.world_seed = 20260924
+	world.register_service = false
+	add_child(world)
+	var _set := world.setup()
+	world.start(0)
+	var _me := world.add_player(1, "You")
+	var _other := world.add_player(2, "Them")
+	world.spawn(1)
+	world.spawn(2)
+	var me := world.monster_for(1)
+	var them := world.monster_for(2)
+	me.alive = true
+	them.alive = true
+
+	# --- The blind.
+	var hud := HungryHud.new()
+	hud.name = "AdminHud"
+	add_child(hud)
+	hud.build(world, null, 1)
+
+	_check(
+		hud.blind_overlay != null and hud.blind_overlay.get_index() == 1
+			and hud.minimap.get_index() == 0,
+		"the blind sits over the minimap and under every other widget",
+		"blind %d, minimap %d" % [hud.blind_overlay.get_index(), hud.minimap.get_index()]
+	)
+
+	them.blinded = true
+	hud.present_blind(1.0)
+	_check(
+		not hud.blind_overlay.visible,
+		"somebody else's blind does not touch this screen"
+	)
+
+	me.blinded = true
+	hud.present_blind(HungryHud.BLIND_FADE_SEC * 0.5)
+	var halfway := hud.blind_overlay.modulate.a
+	hud.present_blind(1.0)
+	_check(
+		halfway > 0.3 and halfway < 0.7 and is_equal_approx(hud.blind_overlay.modulate.a, 1.0),
+		"this player's own comes down over a quarter of a second, not in a frame (%.2f, then %.2f)"
+			% [halfway, hud.blind_overlay.modulate.a]
+	)
+
+	# The whole viewport, not the HUD's rect: `DotHud` insets itself by the safe area, and
+	# game-arena's first rendered blind left a frame of the world showing round the edge.
+	var covered := hud.blind_overlay.get_global_rect()
+	var screen := get_viewport().get_visible_rect()
+	_check(
+		covered.encloses(screen),
+		"and it covers the whole viewport (%s over %s)" % [covered, screen]
+	)
+
+	# Dead is still blind: otherwise feeding yourself to the nearest monster lifts it.
+	me.alive = false
+	hud.present_blind(1.0)
+	_check(hud.blind_overlay.visible, "and being eaten does not lift it")
+	me.alive = true
+
+	me.blinded = false
+	hud.present_blind(1.0)
+	_check(not hud.blind_overlay.visible, "and it lifts when the flag does")
+	hud.queue_free()
+
+	# --- The beacon.
+	var p := _make()
+	var sink := p.audio.sink as HungrySoundSink
+	var ping := p.audio.catalogue.find(HungryPresentation.BEACON_SOUND)
+	_check(
+		ping != null and ping.kind == DotAudioDef.Kind.POSITIONAL_2D and ping.priority < 100
+			and HungrySoundSink.CUES.has(String(HungryPresentation.BEACON_SOUND)),
+		"the ping is catalogued, positional, under the three that change everything, and mapped to a voice"
+	)
+
+	var renderer := HungryRenderer.new()
+	renderer.name = "AdminRenderer"
+	add_child(renderer)
+	renderer.bind(world, null, 1)
+	var pulses: Array[int] = []
+	renderer.beacon_pulsed.connect(func(id: int, at: Vector2) -> void:
+		pulses.append(id)
+		var _handle := p.on_beacon(at)
+	)
+
+	_check(renderer.present_beacons(0.016) == 0 and renderer.beacon_count() == 0,
+		"nothing is beaconed, nothing is drawn")
+
+	them.beacon = true
+	sink.forget()
+	p.present(0.0, them.centre())
+	var first := renderer.present_beacons(0.016)
+	var rest := 0
+	for _frame in range(58):
+		rest += renderer.present_beacons(1.0 / 60.0)
+	_check(
+		first == 1 and rest == 0 and renderer.beacon_count() == 1,
+		"a beacon pings the moment it comes on, then not again inside a second (%d, %d)" % [first, rest]
+	)
+	for _frame in range(4):
+		rest += renderer.present_beacons(1.0 / 60.0)
+	_check(rest == 1, "and once when the second is up: once a second, not once a frame (%d)" % rest)
+	_check(
+		pulses == [2, 2] and sink.count_of(HungryPresentation.BEACON_SOUND) == 2,
+		"every ripple is heard through the bank, for the beaconed player (%s, %d)"
+			% [str(pulses), sink.count_of(HungryPresentation.BEACON_SOUND)]
+	)
+
+	# Positional: dot-audio culls a ping past its distance, which is what makes the edge
+	# pointer — not the sound — the way a beacon two screens away is found.
+	p.present(0.0, them.centre() + Vector2(ping.max_distance * 2.0, 0.0) if ping != null else Vector2.ZERO)
+	_check(
+		p.on_beacon(them.centre()) == 0,
+		"and a beacon far outside earshot is culled rather than heard across the arena"
+	)
+
+	them.alive = false
+	var _gone := renderer.present_beacons(0.016)
+	_check(renderer.beacon_count() == 0, "a beacon goes when its monster is eaten")
+	them.alive = true
+	var _back := renderer.present_beacons(0.016)
+	them.beacon = false
+	var _off := renderer.present_beacons(0.016)
+	_check(renderer.beacon_count() == 0, "and when the flag does")
+
+	renderer.queue_free()
+	p.queue_free()
+	world.queue_free()
 	_done()

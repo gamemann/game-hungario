@@ -37,6 +37,9 @@ const AVATAR_DIR := "user://hungry_sandbox_avatars"
 const SCOPE_KEY := "user://hungry_sandbox_scope.key"
 const SERVER_DIR := "user://hungry_sandbox_server"
 
+## Every check this suite runs. See the guard at the end of [method _run].
+const CHECKS := 95
+
 var _passed := 0
 var _failed := 0
 var _failures := PackedStringArray()
@@ -125,6 +128,16 @@ func _run() -> void:
 
 	for line in _failures:
 		print("  FAIL  %s" % line)
+
+	# The total the section counter cannot be. A runtime error inside a section aborts
+	# that function, and the counter is satisfied because the section had already
+	# announced itself. See docs/testing.md.
+	if _passed + _failed != CHECKS:
+		print("ERROR: %d checks ran, %d expected. A section aborted part-way." % [
+			_passed + _failed, CHECKS
+		])
+		get_tree().quit(1)
+		return
 
 	get_tree().quit(1 if _failed > 0 else 0)
 
@@ -1016,6 +1029,8 @@ func _test_two_players() -> void:
 
 	_check(shared, "and so does a loadout they chose")
 
+	await _test_blind_and_beacon_audience(module, theirs)
+
 	# Leaving has to be visible too: a monster left behind by a player who is gone is one
 	# everybody else can still be eaten by.
 	var their_peer := module.bridge.peer_for_player(theirs)
@@ -1042,6 +1057,53 @@ func _test_two_players() -> void:
 	_other = null
 	_other_link = null
 	_done()
+
+
+## An administrator's blind and beacon, with two real clients on real sockets: the one
+## thing about both that one client cannot show is who ELSE is told.
+##
+## The second player is blinded and beaconed. Their own client has to black its screen out
+## and the first client must never learn it — an opponent who could read the blind would
+## know the moment somebody could not see them coming — while both clients draw the
+## beacon. Asserted on each client's own copy of the monster and on what its HUD and its
+## renderer actually did with it, which is what a player sees. `headless_net` proves the
+## same audience over a loopback; this is the path through the console's tools, a live
+## module and two `MultiplayerAPI`s.
+func _test_blind_and_beacon_audience(module: HungryModule, theirs: int) -> void:
+	var id := StringName(str(theirs))
+	var blinded: DotResult = await module.mod_tools.toggle(&"console", id, DotModTools.ACTION_BLIND, true, 100)
+	var lit: DotResult = await module.mod_tools.toggle(&"console", id, DotModTools.ACTION_BEACON, true, 100)
+
+	var dark := await _until(func() -> bool:
+		var monster := _other.world.monster_for(theirs)
+		return monster != null and monster.blinded and _other.hud.blind_overlay.visible
+	, 6.0)
+	_check(blinded.ok and dark, "a blind reaches the blinded player's own client, and its screen goes dark",
+		str(blinded.error))
+
+	var seen := await _until(func() -> bool:
+		var monster := _client.world.monster_for(theirs)
+		return monster != null and monster.beacon and _client.renderer.beacon_count() == 1 \
+			and _other.renderer.beacon_count() == 1
+	, 6.0)
+	_check(lit.ok and seen, "a beacon reaches both clients, and both draw it", str(lit.error))
+
+	# Given the same snapshots the beacon rode in on, and a few more.
+	await _frames(20)
+	_check(
+		not _client.world.monster_for(theirs).blinded and not _client.hud.blind_overlay.visible
+			and not _client.world.monster_for(_client.bridge.local_player_id).blinded,
+		"and the other client is never told about the blind, and its screen stays lit"
+	)
+
+	var _unblind: DotResult = await module.mod_tools.toggle(&"console", id, DotModTools.ACTION_BLIND, false, 100)
+	var _unlit: DotResult = await module.mod_tools.toggle(&"console", id, DotModTools.ACTION_BEACON, false, 100)
+	var cleared := await _until(func() -> bool:
+		return not _other.world.monster_for(theirs).blinded \
+			and not _client.world.monster_for(theirs).beacon \
+			and _client.renderer.beacon_count() == 0 and _other.renderer.beacon_count() == 0
+	, 6.0)
+	_check(cleared, "and turning both off reaches both clients")
 
 
 func _test_game_change() -> void:

@@ -60,6 +60,9 @@ enum Cue {
 	VOTE_WARNING,
 	## One second of that countdown.
 	VOTE_COUNT,
+	## An administrator's beacon, once a second. Appended, so every cue above keeps its
+	## number.
+	BEACON,
 }
 
 ## Volume in decibels, applied to every voice. A game whose sound cannot be turned down is
@@ -112,6 +115,11 @@ func build() -> void:
 		# Higher and shorter than the menu click, so a countdown is heard as a count and
 		# not as somebody else opening a menu.
 		Cue.VOTE_COUNT: bake(1320.0, 1320.0, 0.05, 0.22, 0.0),
+		# The beacon: a clean falling tone, low and short. Clean, because it is an admin's
+		# mark rather than something a monster did; falling and low, so a ping once a
+		# second is never heard as a ballot's count, which is high and flat, or as a fruit,
+		# which rises.
+		Cue.BEACON: bake(620.0, 440.0, 0.12, 0.30, 0.0),
 	}
 
 	for index in range(VOICES):

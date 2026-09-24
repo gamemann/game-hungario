@@ -37,7 +37,7 @@ const SERVER_DIR := "user://hungry_dedicated"
 ## prints it to say which game this is, and nothing treats it as proof.
 const APP_URL := "hungario"
 
-const CHECKS := 187
+const CHECKS := 195
 
 var _passed := 0
 var _failed := 0
@@ -957,7 +957,9 @@ func _test_live_tools() -> void:
 	_check(monster != null, "a player joins as a monster")
 
 	if monster == null:
-		for what in ["slay", "respawn", "give", "noclip", "freeze", "speed", "clean", "refusal", "rename"]:
+		for what in ["slay", "respawn", "give", "noclip", "freeze", "speed", "clean", "refusal", "rename",
+				"blind", "blind entity", "blind spell", "beacon", "beacon entity", "beacon kept",
+				"beacon off", "modtools"]:
 			_check(false, what)
 		_done()
 		return
@@ -1012,6 +1014,59 @@ func _test_live_tools() -> void:
 		"and a respawn arrives clean: no noclip, no freeze, normal speed",
 		str(Dot2DAdminModifiers.words(monster.admin)))
 
+	# Blind and beacon: two flags on the monster, carried on every piece's entity — the
+	# blind to its owner alone, the beacon to everybody. Who receives which is
+	# `headless_net`'s; what they look like is `headless_presentation`'s and
+	# `tools/screenshot_map.sh`'s. This is the console reaching the entity the netcode sends.
+	var dark := await _live("blind Chomp")
+	_check(monster.blinded, "`blind Chomp` blacks their screen out", " | ".join(dark))
+	_check(
+		await _until(func() -> bool: return _pieces_carry(monster, "net_blind", true)),
+		"and it is on every piece's entity the netcode sends them"
+	)
+
+	# A blind is a spell. dot-moderation lifts it through the same handler when the time is
+	# up, so what is checked is the flag, not the timer.
+	var _lift := await _live("blind Chomp off")
+	var spell := await _live("blind Chomp 0.2")
+	var was_on := monster.blinded
+	await get_tree().create_timer(0.4).timeout
+	_check(was_on and not monster.blinded, "`blind Chomp 0.2` lifts on its own when the time is up",
+		" | ".join(spell))
+
+	var lit := await _live("beacon Chomp")
+	_check(monster.beacon, "`beacon Chomp` marks them on every screen", " | ".join(lit))
+	_check(
+		await _until(func() -> bool: return _pieces_carry(monster, "net_beacon", true)),
+		"and every piece of a beaconed monster is relevant to everybody, however far away"
+	)
+
+	# Both are about the person, not the body: being eaten is what a player being punished
+	# would otherwise use to end one, and in this game that takes no effort at all.
+	var _dark_again := await _live("blind Chomp")
+	var _eaten := await _live("slay Chomp")
+	var _reborn := await _live("respawn Chomp")
+	_check(
+		monster.alive and monster.blinded and monster.beacon,
+		"a respawn keeps blind and beacon, where it ends a noclip and a freeze"
+	)
+
+	var _dark_off := await _live("blind Chomp off")
+	var _unlit := await _live("beacon Chomp off")
+	_check(
+		await _until(func() -> bool: return _pieces_carry(monster, "net_beacon", false))
+			and not monster.blinded and not monster.beacon,
+		"`beacon Chomp off` puts them back under the ordinary interest rules"
+	)
+
+	var listed := await _live("modtools")
+	_check(
+		_said_any(listed, "blind") and _said_any(listed, "beacon")
+			and not _said_any(listed, "draws no"),
+		"`modtools` lists blind and beacon as supported, and no longer refuses them",
+		" | ".join(listed)
+	)
+
 	var refused := await _live("god Chomp")
 	_check(_said_any(refused, "being eaten"), "`god` is refused, and says being eaten is the game",
 		" | ".join(refused))
@@ -1022,6 +1077,25 @@ func _test_live_tools() -> void:
 
 	var _released := _server.release_session(session.peer_id)
 	_done()
+
+
+## Whether every piece of [param monster] has [param property] at [param want] on the
+## entity the netcode sends — and, for the beacon, whether each is always relevant to match,
+## because the two are one decision and a beacon without the relevance fails far away.
+func _pieces_carry(monster: HungryMonster, property: String, want: bool) -> bool:
+	if monster.piece_count() == 0:
+		return false
+
+	for piece in monster.pieces:
+		if piece.net == null or bool(piece.net.get(property)) != want:
+			return false
+
+		if property == "net_beacon":
+			var identity := piece.net.get("identity") as DotNetIdentity
+			if identity == null or identity.always_relevant != want:
+				return false
+
+	return true
 
 
 func _live(line: String) -> PackedStringArray:

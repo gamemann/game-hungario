@@ -16,6 +16,7 @@ const HungryWorld := preload("../game/hungry_world.gd")
 ## reason.
 ##
 ##     tools/screenshot_map.sh warrens
+##     tools/screenshot_map.sh warrens --admin   # also a beacon, and a blind
 ##
 ## [b]Not `--headless`[/b]: that gives a null renderer and a 64 x 64 viewport, and every
 ## frame it saves is empty — which is worse than no screenshot because it looks like one.
@@ -49,6 +50,7 @@ func _initialize() -> void:
 	# `--name=` keeps those framings from overwriting the default ones.
 	var at := Vector2.INF
 	var tag := ""
+	var admin := false
 
 	for argument in OS.get_cmdline_user_args():
 		if argument.begins_with("--at="):
@@ -58,6 +60,8 @@ func _initialize() -> void:
 				at = Vector2(float(parts[0]), float(parts[1]))
 		elif argument.begins_with("--name="):
 			tag = "_" + argument.trim_prefix("--name=")
+		elif argument == "--admin":
+			admin = true
 		elif not argument.begins_with("-"):
 			wanted = StringName(argument)
 
@@ -102,6 +106,16 @@ func _initialize() -> void:
 		# neither may sit on the other.
 		{"name": "%s%s_vote" % [wanted, tag], "mass": 0.0, "whole": false, "vote": true},
 	]
+
+	# An administrator's two marks, which are drawn and not simulated, so nothing but a
+	# frame can say whether they read. The beacon frame has one beaconed monster on screen
+	# and one far off it, so the ring, the ripple, the edge pointer and the minimap's ring
+	# are all in one picture; the blind frame is this player's own screen, blacked out
+	# under the HUD, which is the one frame where "the blind covers the viewport" means
+	# anything at all — a headless viewport is 64 x 64.
+	if admin:
+		_shots.append({"name": "%s%s_beacon" % [wanted, tag], "mass": 0.0, "whole": false, "beacon": true})
+		_shots.append({"name": "%s%s_blind" % [wanted, tag], "mass": 0.0, "whole": false, "blind": true})
 
 
 ## The half of the setup that needs the world's nodes to have had `_ready`: see the note
@@ -214,6 +228,16 @@ func _process(_delta: float) -> bool:
 			_hud.say("A vote for what plays next starts in 5s.", Color(0.62, 0.78, 1.0))
 			_hud.vote_countdown(4, false)
 
+		if shot.has("beacon"):
+			_beacon_two()
+
+		if shot.has("blind"):
+			_hud.visible = true
+			_world.monster_for(1).blinded = true
+			# Straight to fully down: four settle frames are a sixth of the fade, and a frame
+			# of a blind a quarter of the way down says nothing about the finished one.
+			_hud.present_blind(1.0)
+
 		_world.tick({})
 
 	_wait -= 1
@@ -230,3 +254,20 @@ func _process(_delta: float) -> bool:
 	_at += 1
 	_wait = SETTLE
 	return false
+
+
+## Two more monsters, both beaconed: one beside the player, one in the far corner of the
+## arena, which is off any player's screen and so is found by its edge pointer.
+func _beacon_two() -> void:
+	var me := _world.monster_for(1)
+
+	if _world.monster_for(2) == null:
+		_world.add_player(2, "Beaconed")
+		_world.spawn(2, me.centre() + Vector2(360.0, -40.0))
+		_world.add_player(3, "Far Away")
+		_world.spawn(3, _world.arena.bounds.position + Vector2(160.0, 160.0))
+
+	_world.monster_for(2).beacon = true
+	_world.monster_for(3).beacon = true
+	_hud.visible = true
+	_hud.refresh_leaderboard()

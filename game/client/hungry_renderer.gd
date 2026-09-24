@@ -1,6 +1,7 @@
 @tool
 extends Node2D
 
+const HungryBeacon := preload("hungry_beacon.gd")
 const HungryContent := preload("../hungry_content.gd")
 const HungryContentSource := preload("hungry_content_source.gd")
 const HungryField := preload("../hungry_field.gd")
@@ -29,6 +30,10 @@ const HungryWorld := preload("../hungry_world.gd")
 ## that is [HungryRider].
 
 const CHANNEL := "hungry.render"
+
+## A beacon on [param player_id] sent out a ripple from [param at]: once a second while it
+## is on, and once the moment it comes on. The client plays the ping here.
+signal beacon_pulsed(player_id: int, at: Vector2)
 
 ## Extra world units drawn beyond the camera rectangle, so nothing pops in at the edge.
 const CULL_MARGIN := 120.0
@@ -63,6 +68,10 @@ var _riders: Dictionary = {}
 ## What is in the arena besides the players. Read, never written — a renderer that nudged
 ## one would be a renderer fighting the simulation, and the symptom is a stutter nobody
 ## can locate.
+## An administrator's beacons, one per beaconed monster, keyed by player id. Built and
+## dropped by [method present_beacons] as the replicated flag comes and goes.
+var _beacons: Dictionary = {}
+
 var hunters: HungryHunters = null
 var hazards: HungryHazards = null
 
@@ -104,9 +113,50 @@ func _ready() -> void:
 	z_index = -1
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	if not Engine.is_editor_hint():
+		present_beacons(delta)
 		queue_redraw()
+
+
+## Moves every beacon's ripple on, starts one for a monster that has just been beaconed and
+## drops one whose monster is not any more — or is not alive: the flag outlives a death
+## (dot-moderation re-applies it on the respawn), but a ring round a monster that is not in
+## the arena marks nothing, and a pointer at where it died points everybody at empty floor.
+##
+## Returns how many pinged this frame. Public so a check can step it.
+func present_beacons(delta: float) -> int:
+	if world == null:
+		return 0
+
+	var pinged := 0
+	var seen := {}
+
+	for monster in world.monsters():
+		if not monster.beacon or not monster.alive or monster.piece_count() == 0:
+			continue
+
+		seen[monster.id] = true
+		var beacon: HungryBeacon = _beacons.get(monster.id)
+
+		if beacon == null:
+			beacon = HungryBeacon.new()
+			_beacons[monster.id] = beacon
+
+		if beacon.advance(delta):
+			pinged += 1
+			beacon_pulsed.emit(monster.id, monster.centre())
+
+	for id: Variant in _beacons.keys():
+		if not seen.has(id):
+			_beacons.erase(id)
+
+	return pinged
+
+
+## How many beacons are being drawn, for a check.
+func beacon_count() -> int:
+	return _beacons.size()
 
 
 func bind(p_world: HungryWorld, p_camera: Camera2D, p_player_id: int) -> void:
@@ -132,11 +182,19 @@ func _view() -> Rect2:
 	# Found by rendering a frame of a level and looking at it. dot-2d's own camera rig had
 	# the same inversion in `visible_rect` and `_clamp`, which is what interest management
 	# is measured against.
+	return _visible().grow(CULL_MARGIN)
+
+
+## The world rectangle actually on screen, with no margin. What a beacon's edge pointer is
+## placed against: the margin is for drawing, and a pointer inside it is off the screen.
+func _visible() -> Rect2:
+	if camera == null:
+		return world.arena.bounds if world != null else Rect2()
+
 	var half := get_viewport_rect().size * 0.5 / Vector2(
 		maxf(absf(camera.zoom.x), 0.001), maxf(absf(camera.zoom.y), 0.001)
 	)
-	var rect := Rect2(camera.global_position - half, half * 2.0)
-	return rect.grow(CULL_MARGIN)
+	return Rect2(camera.global_position - half, half * 2.0)
 
 
 func _draw() -> void:
@@ -161,6 +219,8 @@ func _draw() -> void:
 	_draw_hunters(view)
 	_draw_projectiles()
 	_draw_monsters(view)
+	# Last, over every monster: a beacon is the one mark that has to read over a crowd.
+	_draw_beacons(view)
 
 
 ## The level. Read from the same [HungryLayout] the client predicts itself against, which
@@ -494,6 +554,34 @@ func _draw_piece(
 		)
 
 
+## Every beacon: a ring round the monster when it is anywhere near the screen, and a
+## pointer at the screen's edge when it is not. See [HungryBeacon].
+func _draw_beacons(view: Rect2) -> void:
+	if _beacons.is_empty():
+		return
+
+	var visible := _visible()
+	var px := 1.0 / maxf(absf(camera.zoom.x), 0.001) if camera != null else 1.0
+
+	for id: Variant in _beacons:
+		var monster := world.monster_for(int(id))
+
+		if monster == null or not monster.alive or monster.piece_count() == 0:
+			continue
+
+		var beacon: HungryBeacon = _beacons[id]
+		var centre := monster.centre()
+		var radius := monster.spread_radius()
+
+		if view.grow(radius * HungryBeacon.RIPPLE_SCALE + HungryBeacon.MARGIN * 3.0).has_point(centre):
+			beacon.draw_ring(self, centre, radius)
+
+		# Not on this player's own beacon: they are in the middle of their own screen, and
+		# a pointer never has anywhere to point when the camera is following them.
+		if int(id) != local_player_id:
+			var _drew := beacon.draw_pointer(self, visible, centre, px)
+
+
 ## Rings a piece by whether it can be eaten, or eaten by.
 ##
 ## Neither, when the two are within the ratio of each other — which is the interesting
@@ -586,6 +674,8 @@ func _catalogue() -> DotAvatarCatalogue:
 
 ## Drops the rider of a player who has left.
 func forget(player_id: int) -> void:
+	_beacons.erase(player_id)
+
 	var rider: HungryRider = _riders.get(player_id)
 
 	if rider != null and is_instance_valid(rider):
@@ -597,6 +687,7 @@ func forget(player_id: int) -> void:
 func describe() -> Dictionary:
 	return {
 		"riders": _riders.size(),
+		"beacons": _beacons.size(),
 		"view": _view(),
 		"player": local_player_id,
 		"content": content.describe() if content != null else null,

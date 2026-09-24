@@ -107,6 +107,25 @@ var flags: int = 0
 ## be a freeze.
 var admin: int = 0
 
+## An administrator's `blind`: this player's own screen is blacked out.
+##
+## [b]Set on the authority and replicated to the OWNER ONLY[/b] (`HungryPieceNet.net_blind`).
+## Nobody else's screen changes, so nobody else needs to know — and an opponent who could
+## read it would know exactly when somebody could not see them coming, which in a game
+## about being eaten is the moment to go and eat them. `HungryHud` draws it.
+##
+## On the monster rather than on a piece for the reason [member admin] is: an admin acts on
+## a player, and a player who has split is still one pair of eyes.
+var blinded: bool = false
+
+## An administrator's `beacon`: a pulsing ring round this monster that every client draws,
+## and a ping every client hears, until it is turned off.
+##
+## Set on the authority and replicated to everybody (`HungryPieceNet.net_beacon`), and it
+## makes every piece of this monster always relevant, so the beacon reaches a client
+## however far across the arena it is. `HungryRenderer` draws it.
+var beacon: bool = false
+
 ## Peak mass this life, for the scoreboard.
 var best_mass: float = 0.0
 
@@ -352,6 +371,8 @@ func describe() -> Dictionary:
 		"effects": effects.size(),
 		"flags": flags,
 		"admin": Dot2DAdminModifiers.words(admin),
+		"blinded": blinded,
+		"beacon": beacon,
 		"trait": String(trait_id),
 		"starter": String(starter_item()),
 		"food": food_eaten,

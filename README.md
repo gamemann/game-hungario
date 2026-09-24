@@ -99,7 +99,7 @@ Everything here is server-authoritative. Clients send inputs, never state.
 - **Eleven hundred pieces of food are never replicated.** They are placed by a hash of (seed, index), so a client lays the whole field out from one integer; what travels is which slots have been eaten.
 - **Each piece is a replicated entity**, interest-managed from the monster's centroid, so a client is told about what is on its screen and nothing else. Data never sent cannot be drawn on a wallhack.
 - **Your own monster is predicted** and reconciled against the server, so it moves on the tick you press rather than a round trip later.
-- **No audio files either.** The ten sounds are generated at startup from a sweep, a noise component and an envelope, so the game makes noise without anybody producing a WAV.
+- **No audio files either.** The fifteen sounds are generated at startup from a sweep, a noise component and an envelope, so the game makes noise without anybody producing a WAV.
 - **The server can change mode with everybody still connected.** `changegame frenzy`.
 
 ## Playing it in a browser
@@ -124,6 +124,8 @@ See [web/README.md](web/README.md). Short version: the server listens on **WebSo
 | `changegame hungry_frenzy` | Switch mode without dropping anybody. |
 | `votemap hungry_frenzy` | Let the players decide. dot-server's own, no code here. |
 
+A moderator's live tools are [dot-moderation](https://github.com/modcommunity/dot-moderation)'s, and `modtools` lists what this game supports. Among them, `blind <player> [on|off|seconds]` blacks out that player's own screen and nobody else's, and `beacon <player> [on|off]` rings their monster on every screen, points at it from the edge when it is off screen, and pings once a second. Both outlive being eaten; noclip and freeze do not.
+
 ## Configuring the mode vote
 
 The vote for the next mode is [dot-vote](https://github.com/modcommunity/dot-vote), and the rules in `game/hungry_maps.gd` are only this game's defaults. A server owner overrides any of dot-vote's settings without touching code, in `user://cfg/hungry_vote.json`, then `DOT_VOTE_*`, then `--vote-*` — later wins. A file that does not validate is refused whole and the defaults stand, with the reason in the log.
@@ -140,10 +142,10 @@ The end-of-mode vote and the option to extend the current mode:
 
 ```bash
 godot --headless --path . res://examples/headless_round.tscn   # 286 checks, the game
-godot --headless --path . res://examples/headless_net.tscn     # 139 checks, the netcode
-godot --headless --path . res://examples/dedicated.tscn        # 187 checks, a real DotServer
-godot --headless --path . res://examples/headless_presentation.tscn  # 56 checks, the client half
-godot --headless --path . res://examples/sandbox.tscn          #  91 checks, two real clients
+godot --headless --path . res://examples/headless_net.tscn     # 149 checks, the netcode
+godot --headless --path . res://examples/dedicated.tscn        # 195 checks, a real DotServer
+godot --headless --path . res://examples/headless_presentation.tscn  # 70 checks, the client half
+godot --headless --path . res://examples/sandbox.tscn          #  95 checks, two real clients
 godot --headless --path . res://examples/content.tscn          #  46 checks, the cloud path
 ```
 

@@ -2,6 +2,7 @@ extends DotNetBehaviour
 
 const HungryNetBridge := preload("hungry_net_bridge.gd")
 const HungryNetCommand := preload("hungry_net_command.gd")
+const HungryMonster := preload("../hungry_monster.gd")
 const HungryPiece := preload("../hungry_piece.gd")
 
 ## The thirty lines [Dot2DNetSync] says belong in the game.
@@ -29,6 +30,14 @@ var net_velocity: Vector2 = Vector2.ZERO
 var net_mass: int = 0
 var net_flags: int = 0
 var net_admin: int = 0
+
+# --- An administrator's marks, from HungryModTools ---
+
+## [member HungryMonster.blinded]. Owner only: see [method _register_net_vars].
+var net_blind: bool = false
+
+## [member HungryMonster.beacon]. Everybody's.
+var net_beacon: bool = false
 
 ## Newest tick whose state this behaviour has adopted. Client side, for reconciliation.
 var last_state_tick: int = -1
@@ -71,6 +80,20 @@ func _register_net_vars() -> void:
 
 	if position_var != null:
 		position_var.with_priority(4.0)
+
+	# [b]Per-piece state rather than an event, and that is what makes both of these
+	# survive what an event does not.[/b] A client that joins after the admin typed
+	# `beacon`, a snapshot lost on the way, a game change: each is a baseline the next
+	# snapshot corrects, where an event sent once is simply missed. Two bits, and nothing
+	# at all on a tick where neither changed.
+	#
+	# On every piece of the monster rather than on one of them, because which piece a
+	# client is told about is interest management's decision and it can be any of them.
+	#
+	# The blind goes to its owner alone. Nobody else's screen changes, and an opponent who
+	# received it would know the moment somebody could not see them coming.
+	replicate(&"net_blind", DotNetVar.Type.BOOL).to_owner_only()
+	replicate(&"net_beacon", DotNetVar.Type.BOOL)
 
 
 # --- Input -----------------------------------------------------------------
@@ -131,6 +154,20 @@ func pull() -> void:
 
 	Dot2DNetSync.pull(piece.state, self)
 
+	var monster := _monster()
+
+	if monster != null:
+		net_blind = monster.blinded
+		net_beacon = monster.beacon
+
+		# A beaconed monster is relevant to everybody, wherever it is. The beacon's whole
+		# job is that the arena can find this player, and a client whose view rectangle had
+		# cut them would receive neither the flag nor the position to draw it at — a beacon
+		# that works everywhere except across the arena. On the authority only: relevance
+		# is the server's decision, and a client's copy of the flag decides nothing.
+		if identity != null and identity.is_authoritative:
+			identity.always_relevant = monster.beacon
+
 	var node := identity.entity as Node2D if identity != null else null
 
 	if node != null:
@@ -164,6 +201,11 @@ func _net_state_applied(tick: int) -> void:
 
 		if monster != null:
 			monster.adopt_flags(net_flags)
+			# Every piece carries the same two bits, so whichever arrives last says the
+			# same thing. A non-owner never receives `net_blind` and so always writes false
+			# here, which is the point of it being owner-only.
+			monster.blinded = net_blind
+			monster.beacon = net_beacon
 
 	var node := identity.entity as Node2D if identity != null else null
 
@@ -197,6 +239,13 @@ func _net_interpolated(_tick: int) -> void:
 		node.position = piece.state.position
 
 
+func _monster() -> HungryMonster:
+	if piece == null or bridge == null or bridge.world == null or not is_instance_valid(bridge.world):
+		return null
+
+	return bridge.world.monster_for(piece.owner_id)
+
+
 func describe() -> Dictionary:
 	return {
 		"piece": piece.id if piece != null else 0,
@@ -205,5 +254,7 @@ func describe() -> Dictionary:
 		"mass": net_mass,
 		"flags": net_flags,
 		"admin": net_admin,
+		"blind": net_blind,
+		"beacon": net_beacon,
 		"state_tick": last_state_tick,
 	}

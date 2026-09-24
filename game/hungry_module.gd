@@ -402,6 +402,10 @@ func _build_mod_tools() -> void:
 	for action: Variant in refusals:
 		mod_tools.unsupported_reasons[action] = refusals[action]
 
+	for action in HungryModTools.PERSIST_ON_RESPAWN:
+		if not mod_tools.persist_on_respawn.has(action):
+			mod_tools.persist_on_respawn.append(action)
+
 	add_child(mod_tools)
 
 	_watch_spawns(world)
@@ -415,7 +419,8 @@ func _build_mod_tools() -> void:
 
 
 ## A spawn is a new body, and dot-moderation has to be told: it switches noclip and freeze
-## off through the handlers and keeps what persists (god, buddha). Without this an admin's
+## off through the handlers and keeps what persists (god, buddha, and here blind and beacon,
+## which it re-applies through the same handlers). Without this an admin's
 ## noclip would ride a monster through its death into the next life — the bits live on
 ## [HungryMonster], which outlives its pieces — where every other game starts a new body
 ## clean. Arena does this from its own spawn path; this game's spawn path is

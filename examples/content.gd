@@ -26,6 +26,9 @@ const HungryRider := preload("../game/client/hungry_rider.gd")
 const WORK := "user://hungry_content_test"
 const VERSION := "1.0.0"
 
+## Every check this suite runs. See the guard at the end of [method _run].
+const CHECKS := 46
+
 var _passed := 0
 var _failed := 0
 var _failures := PackedStringArray()
@@ -74,6 +77,16 @@ func _run() -> void:
 
 	for line in _failures:
 		print("  FAIL  %s" % line)
+
+	# The total the section counter cannot be. A runtime error inside a section aborts
+	# that function, and the counter is satisfied because the section had already
+	# announced itself. See docs/testing.md.
+	if _passed + _failed != CHECKS:
+		print("ERROR: %d checks ran, %d expected. A section aborted part-way." % [
+			_passed + _failed, CHECKS
+		])
+		get_tree().quit(1)
+		return
 
 	get_tree().quit(1 if _failed > 0 else 0)
 

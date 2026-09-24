@@ -36,7 +36,7 @@ const SNAPSHOT_RATE := 20
 const SEED := 20260828
 const CLIENT_PEER := 2
 
-const CHECKS := 139
+const CHECKS := 149
 
 var _passed := 0
 var _failed := 0
@@ -82,6 +82,7 @@ func _run() -> void:
 		_test_splitting_replicates()
 		_test_throw_replicates()
 		_test_interest()
+		_test_blind_and_beacon()
 		_test_avatar()
 		_test_interpolation()
 		_test_loadout()
@@ -1249,6 +1250,101 @@ func _test_interest() -> void:
 			),
 			"and they are not relevant to a player at the other end"
 		)
+	_done()
+
+
+## An administrator's blind and beacon, through the real handlers, over the link.
+##
+## [b]The audience is the whole point of both.[/b] The client is peer 2 and owns player 7;
+## player 99 is a bot on the far side of the arena that `_test_interest` put there, owned
+## by nobody on this link. A blind is its owner's screen and nobody else's, so the client
+## must receive 7's and must NOT receive 99's — an opponent who could read it would know
+## the moment somebody could not see them coming. A beacon is everybody's, and 99's has to
+## arrive although 99 is outside the client's view: that is what making a beaconed monster
+## always relevant is for, and the negative control is that before the beacon the client
+## was told nothing about 99 at all. Asserted on the client's own copy of each monster,
+## which is what its HUD and its renderer read.
+func _test_blind_and_beacon() -> void:
+	_section("an admin's blind and beacon: who is told")
+
+	var server_fn := func() -> HungryWorld: return _server_world
+	var tools := HungryModTools.handlers(server_fn)
+	var blind: Callable = tools[DotModTools.ACTION_BLIND]
+	var beacon: Callable = tools[DotModTools.ACTION_BEACON]
+
+	var far_monster := _server_world.monster_for(99)
+	var far_piece := far_monster.pieces[0].id if far_monster != null and far_monster.piece_count() > 0 else 0
+	var mine := _client_bridge.behaviour_for(_server_world.monster_for(7).pieces[0].id)
+	var far_on_client := _client_bridge.behaviour_for(far_piece)
+
+	_check(
+		mine != null and mine.find_var(&"net_blind").audience == DotNetVar.Audience.OWNER
+			and mine.find_var(&"net_beacon").audience == DotNetVar.Audience.EVERYONE,
+		"the blind is declared owner-only and the beacon for everybody"
+	)
+	_check(
+		far_on_client != null and _client_world.monster_for(99) != null,
+		"the client knows the far player exists, from their spawn"
+	)
+
+	if mine == null or far_on_client == null or _client_world.monster_for(99) == null:
+		for what in ["control", "owner", "not told", "far beacon", "relevant", "own", "off", "irrelevant"]:
+			_check(false, what)
+		_done()
+		return
+
+	# The negative control first: out of view, the far player's state never arrives.
+	var quiet_since := far_on_client.last_state_tick
+	_steps(20)
+	_check(
+		far_on_client.last_state_tick == quiet_since,
+		"before a beacon the far player's state never reaches the client",
+		"last state tick %d -> %d" % [quiet_since, far_on_client.last_state_tick]
+	)
+
+	var on_mine: DotResult = blind.call(&"7", {"on": true, "actor": "1"})
+	var on_far: DotResult = blind.call(&"99", {"on": true, "actor": "1"})
+	var lit: DotResult = beacon.call(&"99", {"on": true, "actor": "1"})
+	_steps(30)
+
+	_check(
+		on_mine.ok and _client_world.monster_for(7).blinded,
+		"the owner's client blacks its own screen out"
+	)
+	_check(
+		on_far.ok and _server_world.monster_for(99).blinded
+			and not _client_world.monster_for(99).blinded and not far_on_client.net_blind,
+		"and a blind on somebody else is never sent to it",
+		"the client received net_blind = %s for player 99" % str(far_on_client.net_blind)
+	)
+	_check(
+		lit.ok and _client_world.monster_for(99).beacon,
+		"while a beacon on the far player reaches it, across the arena"
+	)
+	_check(
+		_server_bridge.behaviour_for(far_piece).identity.always_relevant
+			and far_on_client.last_state_tick > quiet_since,
+		"because a beaconed monster is relevant to everybody, however far away",
+		"last state tick %d" % far_on_client.last_state_tick
+	)
+	_check(
+		not _client_world.monster_for(7).beacon,
+		"and the beacon lands on nobody else"
+	)
+
+	var _off_mine: DotResult = blind.call(&"7", {"on": false, "actor": "1"})
+	var _off_far: DotResult = blind.call(&"99", {"on": false, "actor": "1"})
+	var _unlit: DotResult = beacon.call(&"99", {"on": false, "actor": "1"})
+	_steps(30)
+
+	_check(
+		not _client_world.monster_for(7).blinded and not _client_world.monster_for(99).beacon,
+		"turning both off reaches the client"
+	)
+	_check(
+		not _server_bridge.behaviour_for(far_piece).identity.always_relevant,
+		"and puts the far player back under the ordinary interest rules"
+	)
 	_done()
 
 

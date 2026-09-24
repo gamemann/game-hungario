@@ -25,6 +25,10 @@ dot-moderation's live tools are here (`HungryModTools`, built in the module beca
 
 **Found on the way, and fixed in dot-net since (f99fde3, 2026-09-24):** a predicted piece the server held still was never pulled back. The mechanism was not the one first written here — a snapshot did carry the entity, with an empty body, and the client filled the reconcile values from its own prediction, so "nothing new" was adopted as "you are right" and the lead replayed twice (113 units away in the naive freeze control, and climbing). dot-net rewinds to the server's whole state now, and the control (c968108) asserts the rubber band a server-only freeze should produce: a 1.9 to 9.4 unit sawtooth whose floor does not climb. The shipped freeze never met the bug, because the admin bit changing is what reaches the client.
 
+**Blind and beacon were refused as "no client overlay" until 2026-09-24, and are two flags now**, following game-arena's (0e818b3). `HungryMonster.blinded` and `HungryMonster.beacon` are set by the handlers on the server and replicated on **every piece** by `HungryPieceNet` — on every piece rather than one because which of a monster's pieces a client is told about is interest management's decision — `net_blind` **owner-only**, because nobody else's screen changes and an opponent who could read it would know the moment somebody could not see them coming, and `net_beacon` to everybody. State rather than an event, so a joiner, a lost snapshot and a game change are a baseline the next snapshot corrects. A beaconed monster's pieces are `always_relevant`, so the beacon reaches a client whose view rectangle had cut them. The client draws both: `HungryHud.blind_overlay` fades a near-black rect in over a quarter of a second, sized to the whole viewport rather than the HUD's safe-area-inset rect, **under** the HUD's widgets so the clock, the feed and the mass still say the round is going on — except the **minimap, which goes under the blind**, because it is every monster's position on one square and a blind that left it showing could be played straight through. It is this player's blind, dead or alive: a blind that lifted while spectating would end the moment its owner fed themselves to somebody. `HungryBeacon` (drawn by `HungryRenderer`) is a ring round the whole monster — its spread, not one piece — with a ripple once a second, and **a pointer at the screen's edge when the monster is off screen**, which is this game's version of arena's column through walls: a top-down arena has no walls to see through, only a screen edge. The minimap rings it too. Each ripple is `HungryRenderer.beacon_pulsed`, played as `HungryPresentation.BEACON_SOUND`, a fifteenth voice in the bank (`HungrySound.Cue.BEACON`, appended last), positional so dot-audio culls it past 3200 units — the pointer, not the ping, is how a beacon two screens away is found. Both persist on a respawn (`HungryModTools.PERSIST_ON_RESPAWN`); `blind <player> <seconds>` is dot-moderation's `TIMED_TOGGLES`.
+
+`headless_net` asserts the audience over the loopback — the client's own monster blinded, a bot's blind never sent, the bot's beacon arriving from across the arena where its state had not arrived before (armed twice: dropping `to_owner_only()` fired two checks, dropping the `always_relevant` line fired two); `sandbox` asserts it with two real clients, down to the blinded client's overlay and neither client's renderer (armed the same way: one fired); `dedicated` drives both through the console, the timed lift, the relevance and the respawn (armed by emptying `PERSIST_ON_RESPAWN`: one fired); `headless_presentation` asserts the overlay's order, fade and coverage, and a ping once a second rather than once a frame (armed both: one and three fired). `tools/screenshot_map.sh <mode> --admin` renders a beacon on screen with another's edge pointer, and a blind.
+
 The rest is refused with a reason `modtools` prints. Gravity, because a top-down arena has none. God and buddha because being eaten is the game, and health and slap because a monster has mass, not health.
 
 ## Why this project exists
@@ -213,7 +217,7 @@ pack, and a version that climbs out of the mount.
 
 ## Sound is arithmetic
 
-`HungrySound` bakes fourteen voices at startup: a sine sweep with a hash-derived noise
+`HungrySound` bakes fifteen voices at startup: a sine sweep with a hash-derived noise
 component under an attack-decay envelope. It ships no audio files, the same way dot-ui
 ships no art and dot-2d draws nothing.
 
@@ -688,14 +692,14 @@ done
 
 godot --headless --path . res://examples/headless_round.tscn   # 286 — the game
 godot --headless --path . res://examples/headless_stack.tscn   #  24 checks
-godot --headless --path . res://examples/headless_net.tscn     # 139 — the netcode
-godot --headless --path . res://examples/dedicated.tscn        # 187 — a real DotServer
-godot --headless --path . res://examples/sandbox.tscn          #  91 — two real clients
+godot --headless --path . res://examples/headless_net.tscn     # 149 — the netcode
+godot --headless --path . res://examples/dedicated.tscn        # 195 — a real DotServer
+godot --headless --path . res://examples/sandbox.tscn          #  95 — two real clients
 godot --headless --path . res://examples/content.tscn          #  46 — the cloud path
-godot --headless --path . res://examples/headless_presentation.tscn  # 56 — the client half
+godot --headless --path . res://examples/headless_presentation.tscn  # 70 — the client half
 ```
 
-829 checks across seven suites. Add `-- --verbose` to `dedicated`, `sandbox` or `content` when one fails and
+865 checks across seven suites. Every one of them has a section counter and a CHECKS total; `sandbox` and `content` were the last two with only the counter, and got theirs on 2026-09-24 (each armed: CHECKS raised by one, exit 1). Add `-- --verbose` to `dedicated`, `sandbox` or `content` when one fails and
 the reason is in a log line rather than in the assertion.
 
 **Run `headless_round` after any change to dot-2d** and **`headless_net` after any change
@@ -724,6 +728,7 @@ tools/screenshot_map.sh warrens        # the whole arena, a player's view, and a
 tools/screenshot_map.sh gauntlet       # the corridor and its slalom
 tools/screenshot_map.sh reef           # both barriers, the lagoon between them
 tools/screenshot_map.sh reef --at=632,1180 --name=lagoon   # a player standing in the lagoon
+tools/screenshot_map.sh warrens --admin  # also <mode>_beacon and <mode>_blind: an admin's marks
 tools/screenshot_menus.sh              # the screens
 ```
 
@@ -797,7 +802,7 @@ progress, which is the one thing that system must never do by accident.
 interesting part of this game's integration is what it **refuses to replace**.
 
 **dot-audio does not replace `HungrySound`.** This game bakes its whole bank
-arithmetically at boot: fourteen cues, 22 kHz, no files, byte-identical everywhere. That is the
+arithmetically at boot: fifteen cues, 22 kHz, no files, byte-identical everywhere. That is the
 best thing about its audio and throwing it away for an addon that names files would be a
 strict downgrade. So `HungrySoundSink` is dot-audio's sink and the generation stays, and
 what the addon adds is the half that was never there: a catalogue, per-id concurrency caps,
