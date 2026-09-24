@@ -20,7 +20,7 @@ const HungryTouch := preload("hungry_touch.gd")
 ## drag the monster across the screen — which is exactly what a `TouchScreenButton`, being
 ## a `Node2D`, would let through.
 
-const CHANNEL := "hungry.touch"
+# No CHANNEL: two buttons that emit signals; what they cause is logged where it happens.
 
 ## Diameter of each button, in pixels, before the safe-area inset.
 ##

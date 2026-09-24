@@ -178,6 +178,13 @@ func gate(
 		return {"allowed": true, "pieces": 0}
 
 	var pieces := pieces_for(damage)
+	# DEBUG: a decision, and the one a player asks about — "it hit and did nothing". The
+	# console can explain a single hit from `describe`; this is the record of all of them.
+	DotLog.debug(CHANNEL, "a throw was refused" if damage.refused else "a throw landed", {
+		"thrower": thrower_id, "victim": victim_id, "item": String(item),
+		"distance": snappedf(distance, 0.1), "amount": snappedf(damage.amount, 0.01),
+		"pieces": pieces,
+	})
 	landed.emit(damage, pieces)
 
 	return {"allowed": not damage.refused, "pieces": pieces}

@@ -20,7 +20,7 @@ const HungrySound := preload("hungry_sound.gd")
 ## and produces bytes, which is what the self-test checks; a headless run makes the bank,
 ## plays into a driver that discards it, and behaves exactly as it would with speakers.
 
-const CHANNEL := "hungry.sound"
+# No CHANNEL: the bank is arithmetic and playing it cannot fail against anything outside the process.
 
 ## 22 kHz mono. Half the size of 44 kHz and indistinguishable for what these are: short
 ## blips with no content above a few kilohertz.

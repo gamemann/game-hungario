@@ -157,10 +157,18 @@ func _on_died(player_id: int, killer_id: int) -> void:
 		str(killer_id) if killer_id != 0 else "",
 		world.current_tick()
 	)
+	# DEBUG: a transition. "My camera went somewhere odd when I died" is answered by who
+	# it was put on, and dot-spectate's own choice can fall through to the leader.
+	DotLog.debug(CHANNEL, "a dead player is spectating", {
+		"player": player_id, "killer": killer_id, "watching": watching(player_id),
+	})
 
 
 func _on_spawned(player_id: int) -> void:
 	if manager != null:
+		if is_spectating(player_id):
+			DotLog.debug(CHANNEL, "a respawn ends spectating", {"player": player_id})
+
 		manager.on_spawn(str(player_id))
 
 

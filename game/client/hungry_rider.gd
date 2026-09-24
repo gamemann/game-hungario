@@ -85,7 +85,13 @@ func _rebuild() -> void:
 
 		var packed: Variant = load(step.scene_path)
 
+		# WARN: a content mistake, and the person who has to act is whoever authored the
+		# pack — who is not looking at this code and will otherwise see a missing hat.
+		# Once per change of avatar, since `wear` returns early on the same digest.
 		if not (packed is PackedScene):
+			DotLog.warn(CHANNEL, "an avatar part did not load as a scene", {
+				"slot": String(step.slot), "path": step.scene_path,
+			})
 			continue
 
 		var instance: Variant = (packed as PackedScene).instantiate()
@@ -95,6 +101,9 @@ func _rebuild() -> void:
 		# checks rather than casting: a 3D part in a 2D catalogue is a content mistake and
 		# should be a missing hat, not a crash.
 		if not (instance is Node2D):
+			DotLog.warn(CHANNEL, "an avatar part is not 2D content and was left off", {
+				"slot": String(step.slot), "path": step.scene_path,
+			})
 			(instance as Node).queue_free()
 			continue
 

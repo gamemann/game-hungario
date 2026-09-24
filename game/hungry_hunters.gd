@@ -340,6 +340,13 @@ func _seed_spawn_points() -> void:
 ## that is about being hunted are different games, and turning one into the other silently
 ## because an addon was installed is exactly what a `cvar` exists to prevent.
 func set_enabled(on: bool) -> void:
+	# INFO on the edge only: an operator turned the mode into a different game, and that is
+	# worth keeping. The cvar may be re-applied with the same value on every game change.
+	if director != null and director.enabled != on:
+		DotLog.info(CHANNEL, "hunters switched %s" % ("on" if on else "off"), {
+			"hunters": _hunters.size(),
+		})
+
 	if director != null:
 		director.enabled = on
 
@@ -520,6 +527,10 @@ func _resolve_eating() -> void:
 					# The hunter eats the piece. Reported rather than done here: what
 					# "lose a piece" means — dying, splitting, respawning — is the
 					# world's, exactly as [DotTimer] never moves a player.
+					DotLog.debug(CHANNEL, "a hunter ate a piece", {
+						"hunter": int(wire_id), "kind": String(kind),
+						"player": monster.id, "mass": snappedf(piece.mass(), 0.1),
+					})
 					piece_hunted.emit(monster.id, piece.mass())
 					world.devour_piece(piece.id)
 					break
@@ -528,6 +539,9 @@ func _resolve_eating() -> void:
 					# so the population budget, the director's count and the removal
 					# event all agree — a hunter deleted by hand would be one the
 					# director never replaced.
+					DotLog.debug(CHANNEL, "a player ate a hunter", {
+						"hunter": int(wire_id), "kind": String(kind), "player": monster.id,
+					})
 					var instance_id := int(_instance_of_wire.get(wire_id, 0))
 					spawner.report_death(instance_id, StringName(str(monster.id)))
 					world.feed_player(monster.id, hunter_mass)
@@ -564,14 +578,22 @@ func _on_spawned(npc: DotNpcInstance) -> void:
 		"alive": true,
 	}
 
+	DotLog.debug(CHANNEL, "a hunter spawned", {
+		"hunter": wire_id, "kind": String(npc.def.id), "at": npc.position_2d(),
+		"population": _hunters.size(),
+	})
 	hunter_changed.emit(wire_id)
 
 
-func _on_removed(npc: DotNpcInstance, _reason: StringName) -> void:
+func _on_removed(npc: DotNpcInstance, reason: StringName) -> void:
 	var wire_id := int(_wire_of_instance.get(npc.instance_id, 0))
 
 	if wire_id == 0:
 		return
+
+	DotLog.debug(CHANNEL, "a hunter was removed", {
+		"hunter": wire_id, "reason": String(reason),
+	})
 
 	_wire_of_instance.erase(npc.instance_id)
 	_instance_of_wire.erase(wire_id)

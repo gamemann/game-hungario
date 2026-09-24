@@ -94,11 +94,47 @@ func _live() -> bool:
 		and multiplayer.has_multiplayer_peer()
 
 
+## Whether the link was live at the last send, and how many sends it has dropped since it
+## stopped being. See [method _can_send].
+var _was_live := true
+var _dropped := 0
+
+
+## [method _live], logged on its edges.
+##
+## [b]Asked on every send, so it logs the change and not the condition.[/b] A link with no
+## peer drops every snapshot, event and input silently — correctly, because there is
+## nobody to send them to — and a server that lost its socket, or a client whose peer went
+## before the scene did, looks exactly like one where nothing happened. DEBUG rather than
+## WARN because the transport's own disconnect is what somebody acts on; this is the
+## record of what this game stopped saying while it was down.
+func _can_send() -> bool:
+	var live := _live()
+
+	if live != _was_live:
+		if live:
+			DotLog.debug(CHANNEL, "the link is live again", {
+				"server": is_server, "dropped": _dropped,
+			})
+		else:
+			DotLog.debug(CHANNEL, "the link has no peer; sends are dropped until it does", {
+				"server": is_server,
+			})
+
+		_was_live = live
+		_dropped = 0
+
+	if not live:
+		_dropped += 1
+
+	return live
+
+
 # --- Sending ---------------------------------------------------------------
 
 ## A state snapshot. Server to one client, or to all of them when [param peer_id] is 0.
 func send_snapshot(peer_id: int, payload: PackedByteArray) -> void:
-	if not _live():
+	if not _can_send():
 		return
 
 	snapshots_sent += 1
@@ -112,7 +148,7 @@ func send_snapshot(peer_id: int, payload: PackedByteArray) -> void:
 
 
 func send_event(peer_id: int, payload: PackedByteArray) -> void:
-	if not _live():
+	if not _can_send():
 		return
 
 	events_sent += 1
@@ -126,7 +162,7 @@ func send_event(peer_id: int, payload: PackedByteArray) -> void:
 
 
 func send_input(payload: PackedByteArray) -> void:
-	if not _live():
+	if not _can_send():
 		return
 
 	inputs_sent += 1
@@ -150,7 +186,7 @@ func send_input(payload: PackedByteArray) -> void:
 ## sends to the authority. **Zero is not "everybody"** — the router names its listeners one
 ## at a time, for the reason [method HungryNetBridge._tell] gives.
 func send_voice(peer_id: int, payload: PackedByteArray) -> void:
-	if not _live():
+	if not _can_send():
 		return
 
 	voice_sent += 1
@@ -165,7 +201,7 @@ func send_voice(peer_id: int, payload: PackedByteArray) -> void:
 
 
 func send_request(payload: PackedByteArray) -> void:
-	if not _live():
+	if not _can_send():
 		return
 
 	requests_sent += 1

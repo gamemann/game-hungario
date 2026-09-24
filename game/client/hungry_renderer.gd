@@ -29,7 +29,7 @@ const HungryWorld := preload("../hungry_world.gd")
 ## and a font. What a real deployment adds is content, through dot-cloud, and the seam for
 ## that is [HungryRider].
 
-const CHANNEL := "hungry.render"
+# No CHANNEL: a drawer. It reads the world every frame and has nothing to report that a frame does not show.
 
 ## A beacon on [param player_id] sent out a ripple from [param at]: once a second while it
 ## is on, and once the moment it comes on. The client plays the ping here.

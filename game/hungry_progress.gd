@@ -251,6 +251,10 @@ func _build_achievements() -> DotResult:
 
 
 func _on_unlocked(player: String, achievement: DotAchievement) -> void:
+	# INFO: what an admin keeps. "I did the thing and was not told" is answered from here.
+	DotLog.info(CHANNEL, "an achievement was unlocked", {
+		"player": player, "achievement": String(achievement.id), "points": achievement.points,
+	})
 	earned.emit(player, achievement.id, achievement.display_name, achievement.points)
 
 
@@ -286,7 +290,15 @@ func file_round(player_key: String, monster: HungryMonster, deaths: int) -> void
 
 
 func _submit(board_id: StringName, key: StringName, value: float, name: String) -> void:
-	boards.submit(board_id, {"mode": String(mode_id)}, key, name, value)
+	var submitted := boards.submit(board_id, {"mode": String(mode_id)}, key, name, value)
+
+	# WARN: a round that was played and is not on the board. Nobody reports a missing row;
+	# they conclude the board is broken, and without this line there is no telling why.
+	if not submitted.ok:
+		DotLog.warn(CHANNEL, "a round could not be filed on a board", {
+			"board": String(board_id), "mode": String(mode_id), "player": String(key),
+			"error": submitted.error.message,
+		})
 
 
 ## Everything on one board, best first.

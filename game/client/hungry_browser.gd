@@ -53,6 +53,10 @@ var _selected: int = -1
 var _since_refresh: float = 0.0
 
 
+## The last refresh's counts, so the log hears a change rather than every refresh.
+var _last_online := -1
+var _last_total := -1
+
 func _ready() -> void:
 	# `set_anchors_and_offsets_preset`, not `set_anchors_preset`. The anchors describe how
 	# a rectangle follows its parent and change nothing until something resizes it, so a
@@ -161,6 +165,14 @@ func _start() -> void:
 	browser.entry_updated.connect(func(_entry: DotBrowserEntry) -> void: _redraw())
 	browser.refresh_finished.connect(func(online: int, total: int) -> void:
 		_status.text = "%d of %d answering." % [online, total]
+		# On the edge, not every refresh: the list refreshes on a timer, and a line per
+		# refresh would bury the one that says the servers stopped answering.
+		if online != _last_online or total != _last_total:
+			DotLog.debug(CHANNEL, "servers answering changed", {
+				"online": online, "total": total, "was": _last_online,
+			})
+			_last_online = online
+			_last_total = total
 		_redraw()
 	)
 
@@ -188,6 +200,9 @@ func add_address(text: String) -> bool:
 
 	if not parsed.ok:
 		_status.text = "That is not an address: %s" % parsed.error.message
+		DotLog.debug(CHANNEL, "an address was refused", {
+			"text": text.strip_edges(), "error": parsed.error.message,
+		})
 		return false
 
 	browser.add_target(parsed.value as DotBrowserTarget)
@@ -264,4 +279,10 @@ func _join_selected() -> void:
 	# that reason — and joining the one it answered on is the most confusing possible
 	# failure: the list works, the server is right there, and the connection times out.
 	browser.note_connected(entry.key())
+	# INFO: the one thing a player did on this screen, and the first line anybody reads
+	# when a connection that follows it fails.
+	DotLog.info(CHANNEL, "joining a server from the browser", {
+		"name": entry.name, "address": entry.join_address(), "mode": entry.game_id,
+		"ping_ms": entry.ping_ms,
+	})
 	joined.emit(entry.join_address())
