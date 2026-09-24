@@ -37,7 +37,7 @@ const HungryWorld := preload("../game/hungry_world.gd")
 const SEED := 20260828
 const TICK_RATE := 60
 
-const CHECKS := 286
+const CHECKS := 317
 
 var _passed := 0
 var _failed := 0
@@ -92,6 +92,8 @@ func _run() -> void:
 	_test_the_slalom()
 	_test_the_reef()
 	_test_the_lagoon()
+	_test_the_den()
+	_test_the_reach()
 	_test_food_on_the_floor()
 	_test_spectating()
 
@@ -1562,7 +1564,13 @@ func _test_the_warrens() -> void:
 	var bounds := world.arena.bounds
 	var layout := world.layout
 
-	if not _check(layout != null and layout.count() == 12, "twelve rocks stand in it"):
+	# Eight ring, four corner and four den rocks. The den was added 2026-09-24 and appended
+	# last, so blocks 0 and 1 below are still the ring's.
+	if not _check(
+		layout != null and layout.count() == HungryLayout.RING_COUNT + 4 + HungryLayout.DEN_COUNT,
+		"sixteen rocks stand in it: the ring, the corners and the den",
+		"%d" % (layout.count() if layout != null else -1)
+	):
 		_drop(world)
 		_done()
 		return
@@ -1604,7 +1612,12 @@ func _test_the_warrens() -> void:
 	# the wall than the ring rocks stand from each other — and it is deliberately the same
 	# call the slalom section makes, because a level whose gates are against a wall gets a
 	# meaningless number out of the other one and nothing says so.
-	var fits := layout.fits_through_gate(bounds)
+	#
+	# [b]The RING's gate, since the den (2026-09-24).[/b] The narrowest gate on the map is
+	# the den's now, a third of this one's mass limit; asked of the whole layout this check
+	# would have been asserting the den was the warrens' ring. `ring_gates(0)` asks the
+	# ring; the den has its own section.
+	var fits: float = Array(layout.ring_gates(0)).min() * 0.5
 	var admits := fits * fits / (rules.base_radius * rules.base_radius)
 
 	_check(
@@ -1724,7 +1737,7 @@ func _test_the_warrens() -> void:
 	_check(
 		predicted.layout.count() == layout.count()
 			and predicted.layout.narrowest_gate(bounds) == layout.narrowest_gate(bounds),
-		"and builds the same twelve from one name in the hello"
+		"and builds the same sixteen from one name in the hello"
 	)
 
 	_drop(predicted)
@@ -2379,6 +2392,350 @@ func _straight_run(
 
 	return furthest
 
+
+## The warrens' den: a ring inside the ring, driven into by a starting monster and refused
+## to one that has eaten.
+##
+## [b]The warrens' section asks the ring its question; this asks the den its own.[/b] The
+## den's gates admit about a tenth of the winning mass where the ring's admit about a
+## third, so the map has three tiers now and each has to be proved at the size it is FOR:
+## a starting monster from the wall gets through both, one between the two limits gets
+## through the ring and no further, and nothing about the den may narrow the moat it
+## stands in below the ring's own gate — that would be a hidden gate only a monster
+## already inside could find.
+##
+## [b]Driven along a route found on the geometry[/b], `HungryLayout.route_to`, rather
+## than along a line picked by hand: a line picked by hand is a claim about where the
+## gates are, and the route is what the rocks the world built actually leave.
+func _test_the_den() -> void:
+	_section("the den")
+
+	var preset := HungryPreset.warrens()
+	var world := _make_world(preset, SEED + 211)
+	world.add_player(1, "Ada")
+	_settle(world)
+
+	var bounds := world.arena.bounds
+	var centre := bounds.get_center()
+	var layout := world.layout
+	var rules := world.tunables.mass_rules
+
+	if not _check(
+		layout != null and layout.rings.size() == 2,
+		"the warrens has two rings: the ring, and the den inside it",
+		"%d rings" % (layout.rings.size() if layout != null else -1)
+	):
+		_drop(world)
+		_done()
+		return
+
+	var ring_gates := layout.ring_gates(0)
+	var den_gates := layout.ring_gates(1)
+	var den_gate: float = Array(den_gates).min()
+	var ring_gate: float = Array(ring_gates).min()
+
+	_check(
+		den_gates.size() == HungryLayout.DEN_COUNT
+			and float(Array(den_gates).max()) - den_gate < 0.5,
+		"the den has four gates, all the same width",
+		_widths(den_gates)
+	)
+
+	# [b]The design number.[/b] Mass IS radius, so the gate is a mass limit, and this one
+	# is meant for the players furthest behind: past a starting monster, short of anybody
+	# who has fed for a minute.
+	var den_admits := rules.mass_for(den_gate * 0.5)
+	_check(
+		den_admits > preset.win_mass * 0.05 and den_admits < preset.win_mass * 0.15,
+		"its gates admit about a tenth of the winning mass",
+		"%.0f of %.0f, through %.0f" % [den_admits, preset.win_mass, den_gate]
+	)
+	_check(
+		rules.radius_for(HungryContent.START_MASS) * 2.0 < den_gate * 0.5,
+		"a starting monster fits with room to spare",
+		"a radius of %.0f through a half-gate of %.0f"
+			% [rules.radius_for(HungryContent.START_MASS), den_gate * 0.5]
+	)
+	_check(
+		den_gate < ring_gate * 0.6,
+		"and it is a tier below the ring rather than another copy of it",
+		"%.0f against the ring's %.0f" % [den_gate, ring_gate]
+	)
+	_check(
+		is_equal_approx(layout.narrowest_gate(bounds), den_gate),
+		"nothing else on the map is tighter than the den",
+		"narrowest %.0f, the den %.0f" % [layout.narrowest_gate(bounds), den_gate]
+	)
+
+	# The moat: the ring's inner face to the den's outer face.
+	var ring_rock: Vector3 = layout.blocks[layout.rings[0].x]
+	var den_rock: Vector3 = layout.blocks[layout.rings[1].x]
+	var ring_at := Vector2(ring_rock.x, ring_rock.y).distance_to(centre)
+	var den_at := Vector2(den_rock.x, den_rock.y).distance_to(centre)
+	var moat := (ring_at - ring_rock.z) - (den_at + den_rock.z)
+	_check(
+		moat > ring_gate + 20.0,
+		"the moat round the den is wider than the ring's gate",
+		"%.0f against %.0f" % [moat, ring_gate]
+	)
+
+	# --- Reach, at the size each tier is for -------------------------------
+
+	# Off the axis on purpose: from a wall's midpoint the line to the centre runs through a
+	# ring gate AND a den gate (both are on the axes), and a route that is one straight leg
+	# proves nothing about finding a way. From here it has to bend at both rings.
+	var wall := Vector2(bounds.position.x + 200.0, centre.y - bounds.size.y * 0.22)
+	var between := (den_gate * 0.5 + ring_gate * 0.5) * 0.5
+	var tiers := layout.reach(bounds, wall, between)
+	var outside_den := 0
+
+	for point in tiers["stranded"]:
+		if point.distance_to(centre) > den_at:
+			outside_den += 1
+
+	_check(
+		tiers["free"] - tiers["reached"] > 0 and outside_den == 0,
+		"one between the two limits reaches everything but the den",
+		"radius %.0f: %d of %d reached, %d stranded outside the den"
+			% [between, tiers["reached"], tiers["free"], outside_den]
+	)
+	_check(
+		layout.route_to(bounds, wall, centre, between).is_empty()
+			and not layout.route_to(
+				bounds, wall, centre + Vector2(den_at + den_rock.z + moat * 0.5, 0.0), between
+			).is_empty(),
+		"so it has a route into the moat and none into the den"
+	)
+
+	# --- Driven: a starting monster from the wall to the centre -------------
+
+	world.spawn(1, wall)
+	_run_ticks(world, 2)
+
+	var monster := world.monster_for(1)
+
+	if not _check(monster != null and monster.alive, "a starting monster spawns by the west wall, off the axis"):
+		_drop(world)
+		_done()
+		return
+
+	var small := monster.pieces[0].radius()
+	# Planned 24 wider than the monster — `route_across`'s margin — because a monster
+	# steered at a waypoint swings wide of the leg on every turn. At 12 it pressed a den
+	# rock's face, ate on the same tick, and grew 2.3 units into it before the next
+	# push-out.
+	var route := layout.route_to(bounds, monster.centre(), centre, small + 24.0)
+
+	_check(
+		route.size() >= 2,
+		"and has a route to the centre that has to turn to find the gates",
+		"%d waypoints" % route.size()
+	)
+
+	var reached := 0
+	var deepest := INF
+	var ring_crossed := false
+
+	for _i in range(TICK_RATE * 40):
+		if reached >= route.size():
+			break
+
+		if monster.centre().distance_to(route[reached]) < 40.0:
+			reached += 1
+			continue
+
+		world.tick({1: _full_reach(monster.centre(), route[reached])})
+
+		for piece in monster.pieces:
+			for block in layout.blocks:
+				deepest = minf(
+					deepest,
+					piece.position().distance_to(Vector2(block.x, block.y)) - block.z
+						- piece.radius()
+				)
+
+		if monster.centre().distance_to(centre) < ring_at - ring_rock.z:
+			ring_crossed = true
+
+	_check(
+		deepest > -2.0,
+		"driven along it, it never overlaps a rock on any tick",
+		"deepest %.1f into a face" % deepest
+	)
+	_check(
+		ring_crossed and reached == route.size()
+			and monster.centre().distance_to(centre) < den_at - den_rock.z,
+		"and it comes through the ring and the den to the middle of it",
+		"%d of %d waypoints, %.0f from the centre, the den's inside is %.0f"
+			% [reached, route.size(), monster.centre().distance_to(centre), den_at - den_rock.z]
+	)
+
+	# --- And one that has eaten is held at the door --------------------------
+
+	# In the moat on the east axis, driven straight at the centre: the line runs through a
+	# den GATE, so the only thing that can stop it is the gate's width.
+	var door := centre + Vector2(den_at + den_rock.z + moat * 0.5, 0.0)
+	var fed := rules.mass_for(den_gate * 0.5) * 1.6
+	_straight_run(world, 1, door, centre, fed)
+	monster = world.monster_for(1)
+
+	_check(
+		monster != null and monster.alive and monster.centre().distance_to(centre) > den_at,
+		"one at %.0f mass driven through a den gate is held outside it" % fed,
+		"stopped %.0f from the centre, the den's rocks stand at %.0f"
+			% [monster.centre().distance_to(centre) if monster != null else -1.0, den_at]
+	)
+
+	_drop(world)
+	_done()
+
+
+## [reach-1]: every level, swept. Every gap passes what it is meant to pass, and nothing on
+## the floor is out of a starting monster's reach.
+##
+## [b]Two questions every level check before this one answered for its own level by
+## hand[/b] — the warrens' gate, the slalom's lanes, the reef's channels — and none of
+## them could see a pocket: floor a spawn can land on and never leave, or food the scatter
+## puts where nobody can eat it. So this asks every mode the same two things, off the
+## geometry alone:
+##
+## - [b]Every gate passes a monster just under its width and refuses one just over.[/b]
+##   [method HungryLayout.gates] finds every gap on the map — rock to rock and rock to
+##   wall, anything with no third rock standing in its mouth — and
+##   [method HungryLayout.gate_passes] floods each one inside its own box, so the only way
+##   through is through. A gap a neighbouring rock has narrowed fails the first half; one
+##   that is not actually the limit its width says fails the second.
+## - [b]A starting monster can reach every sampled point of the floor from the wall.[/b]
+##   And a monster at the winning mass is kept out only where the level means it to be:
+##   the warrens' ring, and nowhere at all on the corridor or the reef, whose designs
+##   promise the leader a way everywhere.
+func _test_the_reach() -> void:
+	_section("the reach of every level")
+
+	var modes: Array[StringName] = [&"classic", &"frenzy", &"gauntlet", &"warrens", &"reef"]
+	var covered := {}
+
+	for mode in modes:
+		covered[HungryPreset.for_id(mode).layout] = true
+
+	var missing := PackedStringArray()
+
+	for layout_id in HungryLayout.ids():
+		if not covered.has(layout_id):
+			missing.append(String(layout_id))
+
+	_check(missing.is_empty(), "every layout is swept here", "not swept: %s" % ", ".join(missing))
+
+	var slack := 8.0
+	var rules := HungryContent.mass_rules()
+
+	for mode in modes:
+		var preset := HungryPreset.for_id(mode)
+		var bounds := Rect2(-preset.world_size * 0.5, preset.world_size)
+		var layout := HungryLayout.for_id(preset.layout, bounds)
+		var start := rules.radius_for(HungryContent.START_MASS)
+		var won := rules.radius_for(preset.win_mass)
+		var wall := Vector2(bounds.position.x + won + 30.0, bounds.get_center().y)
+
+		var small := layout.reach(bounds, wall, start)
+		var stranded_small: PackedVector2Array = small["stranded"]
+		_check(
+			small["free"] > 0 and small["reached"] == small["free"],
+			"%s: a starting monster reaches all of the floor" % mode,
+			"%d of %d sampled points, %d stranded%s"
+				% [small["reached"], small["free"], small["free"] - small["reached"],
+					"" if stranded_small.is_empty() else ", first at %s" % stranded_small[0]]
+		)
+		print("        %s: %d of %d points at radius %.0f" % [
+			mode, small["reached"], small["free"], start
+		])
+
+		var big := layout.reach(bounds, wall, won)
+		var stranded_big: PackedVector2Array = big["stranded"]
+		var big_note := "%d of %d at the winning radius %.0f" % [big["reached"], big["free"], won]
+		print("        %s: %s" % [mode, big_note])
+
+		if preset.layout == HungryLayout.WARRENS:
+			# [b]A finding, not the design (2026-09-24).[/b] The corner rocks stand 481
+			# units off each wall and 491 off the nearest ring rock, so past a radius of
+			# about 240 — 903 mass, 56% of the winning mass — the perimeter lane is four
+			# lanes, and a leader is held in one quarter of it unless it splits. This file's
+			# CLAUDE.md said the lane was open to everybody for ever; the sweep says it is
+			# open to everybody the RING shuts out, which is the half the mode rests on, and
+			# that is what is asserted. Whether the corners should close it at all is a
+			# design question left open in the Queue.
+			var corner_limit := INF
+
+			for gate in layout.gates(bounds):
+				var a: int = gate["a"]
+				var b: int = gate["b"]
+				var corner_first := HungryLayout.RING_COUNT
+
+				if (a >= corner_first and a < corner_first + 4) or (b >= corner_first and b < corner_first + 4):
+					corner_limit = minf(corner_limit, float(gate["width"]) * 0.5)
+
+			# Two grid cells under the limit: the sweep samples every 24 units, and the corner
+			# gaps leave 17 to spare at 8 under, which a grid can step straight over.
+			var lane := layout.reach(bounds, wall, corner_limit - 48.0)
+			var ring: Vector3 = layout.blocks[layout.rings[0].x]
+			var ring_at := Vector2(ring.x, ring.y).distance_to(bounds.get_center())
+			var outside := 0
+
+			for point in lane["stranded"]:
+				if point.distance_to(bounds.get_center()) > ring_at:
+					outside += 1
+
+			var ring_admits := rules.mass_for(Array(layout.ring_gates(0)).min() * 0.5)
+			var lane_admits := rules.mass_for(corner_limit)
+			_check(
+				outside == 0 and lane_admits > ring_admits * 1.5,
+				"%s: anybody the ring shuts out still has the whole perimeter lane" % mode,
+				"whole up to %.0f mass (radius %.0f), the ring shuts out %.0f; %d stranded outside the ring at radius %.0f; at the winning radius: %s"
+					% [lane_admits, corner_limit, ring_admits, outside, corner_limit - 48.0, big_note]
+			)
+			print("        %s: the lane is quartered past %.0f mass; %d of %d stranded at the winning radius" % [
+				mode, lane_admits, stranded_big.size(), big["free"]
+			])
+		else:
+			_check(
+				big["reached"] == big["free"],
+				"%s: a leader can reach all of the floor too" % mode,
+				big_note
+			)
+
+		if layout.is_empty():
+			continue
+
+		var gates := layout.gates(bounds)
+		var shut := PackedStringArray()
+		var leaky := PackedStringArray()
+		var narrowest := INF
+
+		for gate in gates:
+			var width: float = gate["width"]
+			narrowest = minf(narrowest, width)
+
+			if width * 0.5 - slack > start and not layout.gate_passes(bounds, gate, width * 0.5 - slack):
+				shut.append("%d-%d %.0f" % [gate["a"], gate["b"], width])
+
+			if layout.gate_passes(bounds, gate, width * 0.5 + slack):
+				leaky.append("%d-%d %.0f" % [gate["a"], gate["b"], width])
+
+		print("        %s: %d gates, narrowest %.0f" % [mode, gates.size(), narrowest])
+		_check(
+			gates.size() > 0 and shut.is_empty(),
+			"%s: every one of its %d gates passes a monster %.0f under its width" % [
+				mode, gates.size(), slack * 2.0
+			],
+			"shut: %s" % ", ".join(shut)
+		)
+		_check(
+			leaky.is_empty(),
+			"%s: and refuses one %.0f over it" % [mode, slack * 2.0],
+			"leaky: %s" % ", ".join(leaky)
+		)
+
+	_done()
 
 ## Food per unit of the floor that is left, MEASURED, for every mode with a level in it.
 ##

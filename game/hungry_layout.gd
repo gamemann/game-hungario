@@ -29,7 +29,7 @@ const HungryLayout := preload("hungry_layout.gd")
 ## has no corner cases at a vertex, and costs a subtraction and a length. Sixteen of them
 ## make a room; a convex hull solver makes a bug.
 
-const CHANNEL := "hungry.layout"
+# No CHANNEL: a pure function of an id and a rectangle, with nothing at runtime to report.
 
 ## Nothing standing in the arena. What `classic` and `frenzy` use.
 ##
@@ -66,6 +66,16 @@ static func ids() -> Array[StringName]:
 var blocks: PackedVector3Array = PackedVector3Array()
 
 var id: StringName = NONE
+
+## Which runs of [member blocks] are one CLOSED ring, as `(first, count)`.
+##
+## [b]The warrens' two rings, and why they are named rather than inferred.[/b] A ring's
+## gates are between cyclic neighbours — the last rock and the first are a gate too — and
+## its gate width is the level. Once the den stood inside the ring, "the narrowest gate on
+## the map" stopped being the ring's gate and became the den's, so a check that asked the
+## whole layout for the warrens' gate would have been asking about a different ring.
+## [method ring_gates] asks one ring.
+var rings: Array[Vector2i] = []
 
 ## Which runs of [member blocks] are one barrier, as `(first, count)`.
 ##
@@ -116,6 +126,24 @@ const RING_COUNT := 8
 const CORNER_AT := 0.657
 const CORNER_RADIUS := 0.114
 
+## The den: how many rocks, how far out, and how big, same fraction as the ring.
+##
+## [b]Sized by the three gaps it makes, not by how it looks.[/b] At `warrens`' size these
+## are four rocks of 137 at 336 from the centre, which leaves:
+##
+## - [b]a den gate of 202[/b] — a radius of 101, a mass of about 160, a tenth of the winning
+##   mass. A starting monster (22 mass, radius 38) walks in; anything that has eaten for a
+##   minute does not.
+## - [b]a moat of 418[/b] between the den's outer face and the ring's inner face, wider
+##   than the ring's own 361 gate — so anything that came through the ring can walk round
+##   the den. A moat narrower than the ring gate would be a second, hidden gate that only
+##   showed itself to a monster already inside.
+## - [b]an inside 200 across in radius[/b], room for two starting monsters to circle and
+##   for one at the den limit to turn round.
+const DEN_COUNT := 4
+const DEN_AT := 0.16
+const DEN_RADIUS := 0.065
+
 
 ## A ring of eight rocks around an open middle, and a rock in each quadrant.
 ##
@@ -144,15 +172,18 @@ static func _warrens(bounds: Rect2) -> HungryLayout:
 	var ring_radius := half * RING_RADIUS
 
 	for step in range(RING_COUNT):
-		# Offset by half a step so that no gate sits on an axis. A gate on the axis lines
-		# up with the arena's own centre lines, and a player running the perimeter would
-		# find every gate exactly where the last one was.
+		# Offset by half a step, which puts the ROCKS off the axes and therefore the
+		# GATES on them — every 45 degrees, axes and diagonals. (This comment said the
+		# opposite until the den was lined up against it, 2026-09-24; the geometry is
+		# unchanged, and the den's straight run in from each wall depends on it.)
 		var angle := TAU * (float(step) + 0.5) / float(RING_COUNT)
 		out.blocks.append(Vector3(
 			centre.x + cos(angle) * ring_at,
 			centre.y + sin(angle) * ring_at,
 			ring_radius
 		))
+
+	out.rings.append(Vector2i(0, RING_COUNT))
 
 	var corner_at := half * CORNER_AT
 	var corner_radius := half * CORNER_RADIUS
@@ -163,7 +194,45 @@ static func _warrens(bounds: Rect2) -> HungryLayout:
 				centre.x + sx * corner_at, centre.y + sy * corner_at, corner_radius
 			))
 
+	# [b]The den, appended LAST[/b], so the ring is still blocks 0-7 and the corners 8-11
+	# for everything that was written against the warrens before it had a middle's middle.
+	_append_den(out, centre, half)
+
 	return out
+
+
+## The warrens' second half: a ring inside the ring.
+##
+## [b]The ring made the middle a catch-up mechanic for whoever is behind; the den makes
+## one for whoever is FURTHEST behind.[/b] The ring's gates admit about a third of the
+## winning mass, so the middle is shared by everybody who has not yet run away with the
+## round — and a monster of 480 in the middle eats a monster of 30 there as readily as it
+## would outside. The den's gates admit about a tenth, so the one place on the map a
+## newly spawned or just-eaten player cannot be followed into is the very centre, and
+## getting there means crossing the middle first. Three tiers, one rule: mass is radius.
+##
+## [b]Its gates are on the axes, and so are four of the ring's.[/b] The ring's rocks sit
+## half a step off the axes, which puts its gates ON them; the den's rocks sit on the
+## diagonals, which puts its gates on the axes too. So from each wall's midpoint there is
+## one straight line through a ring gate and a den gate to the centre — the route a small
+## monster can read at a glance and run — and the four diagonal ring gates open onto the
+## face of a den rock, so arriving by one of those means walking round to a door.
+##
+## [b]It is a room a monster can outgrow.[/b] Anything that eats its way past the den
+## limit inside it has to split (half the mass is 1/sqrt(2) of the radius) or eject to get
+## out, which is the warrens' own price for the middle, one tier down.
+static func _append_den(layout: HungryLayout, centre: Vector2, half: float) -> void:
+	var den_at := half * DEN_AT
+	var den_radius := half * DEN_RADIUS
+	var first := layout.blocks.size()
+
+	for step in range(DEN_COUNT):
+		var angle := TAU * (float(step) + 0.5) / float(DEN_COUNT)
+		layout.blocks.append(Vector3(
+			centre.x + cos(angle) * den_at, centre.y + sin(angle) * den_at, den_radius
+		))
+
+	layout.rings.append(Vector2i(first, DEN_COUNT))
 
 
 # --- slalom ----------------------------------------------------------------
@@ -684,6 +753,391 @@ func _chain_distance(chain: int, at: Vector2) -> float:
 	return absf((at - a).dot(Vector2(-along.y, along.x)))
 
 
+## The gaps between cyclic neighbours of one closed ring, edge to edge, in block order.
+##
+## Measured off the discs, like [method channels], so a check that compares it with the
+## design is comparing two representations rather than one number with itself.
+func ring_gates(ring: int) -> PackedFloat32Array:
+	var out := PackedFloat32Array()
+
+	if ring < 0 or ring >= rings.size():
+		return out
+
+	var run := rings[ring]
+
+	for step in range(run.y):
+		var a := blocks[run.x + step]
+		var b := blocks[run.x + (step + 1) % run.y]
+		out.append(Vector2(a.x, a.y).distance_to(Vector2(b.x, b.y)) - a.z - b.z)
+
+	return out
+
+
+# --- Reach -----------------------------------------------------------------
+
+## Every gap on the map a monster could be asked to pass through, rock to rock and rock to
+## wall.
+##
+## Each is `{"a": int, "b": int, "mouth": Vector2, "across": Vector2, "normal": Vector2,
+## "width": float}`: the two things either side (`b` is -1 to -4 for the left, right, top
+## and bottom walls), the midpoint of the clear span, the unit direction ALONG that span,
+## the unit direction THROUGH it, and its width.
+##
+## [b]A gap is a gap only if nothing else stands in it[/b] — the Gabriel rule: no third
+## rock touches the circle whose diameter is the clear span. Without it rock 0 and rock 2
+## of a ring would be reported as a 1108-unit "gate" with rock 1 standing in its mouth,
+## and every pair on the map would be a gate to something. [method narrowest_gate] and
+## [method channels] each answer one layout's question; this answers every layout's, and
+## is what [method gate_passes] is driven over.
+func gates(bounds: Rect2) -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+
+	for i in range(blocks.size()):
+		var a := blocks[i]
+		var at := Vector2(a.x, a.y)
+
+		for j in range(i + 1, blocks.size()):
+			var b := blocks[j]
+			var bt := Vector2(b.x, b.y)
+			var across := (bt - at).normalized()
+			var width := at.distance_to(bt) - a.z - b.z
+
+			if width <= 0.0:
+				continue
+
+			var mouth := at + across * (a.z + width * 0.5)
+
+			if not _gap_clear(bounds, mouth, width * 0.5, [i, j]):
+				continue
+
+			out.append({
+				"a": i, "b": j, "mouth": mouth, "across": across,
+				"normal": Vector2(-across.y, across.x), "width": width,
+			})
+
+		# The four walls: the perpendicular from the rock to each one.
+		var walls := [
+			[-1, Vector2.LEFT, at.x - bounds.position.x],
+			[-2, Vector2.RIGHT, bounds.end.x - at.x],
+			[-3, Vector2.UP, at.y - bounds.position.y],
+			[-4, Vector2.DOWN, bounds.end.y - at.y],
+		]
+
+		for wall in walls:
+			var across: Vector2 = wall[1]
+			var width: float = float(wall[2]) - a.z
+
+			if width <= 0.0:
+				continue
+
+			var mouth := at + across * (a.z + width * 0.5)
+
+			if not _gap_clear(bounds, mouth, width * 0.5, [i]):
+				continue
+
+			out.append({
+				"a": i, "b": int(wall[0]), "mouth": mouth, "across": across,
+				"normal": Vector2(-across.y, across.x), "width": width,
+			})
+
+	return out
+
+
+## Whether the circle across a gap is empty of everything but the gap's own two sides —
+## no third rock, and no wall it does not belong to. The wall half is what stops the reef's
+## end rock and the far wall, 2128 apart across a strip 361 deep, being reported as a gate
+## a monster of radius 1060 should pass.
+func _gap_clear(bounds: Rect2, mouth: Vector2, reach: float, except: Array) -> bool:
+	if not bounds.grow(1.0).encloses(Rect2(mouth - Vector2(reach, reach), Vector2(reach, reach) * 2.0)):
+		return false
+
+	for k in range(blocks.size()):
+		if except.has(k):
+			continue
+
+		var c := blocks[k]
+
+		if mouth.distance_to(Vector2(c.x, c.y)) < reach + c.z:
+			return false
+
+	return true
+
+
+## Whether a monster of [param radius] can get through one gap from [method gates], found
+## by a flood fill on the geometry rather than by comparing its width.
+##
+## [b]Filled inside the gap's own box[/b] — the clear span one way, a monster's radius and
+## a few cells either side of the throat the other — and it passes when a fill from any
+## free cell BEFORE the throat reaches any free cell AFTER it. The box's span is exactly
+## the gap, so the only way across the throat is through it; a box any wider lets the fill
+## walk round a rock and report a shut gate as open. And the far rows are not required to
+## be free: a corridor's wall or the next rock of a chain can stand in the box's corners
+## without being in the gate, and the first version of this, which demanded the box's
+## outer rows, reported the lagoon and the den's inside as shut.
+func gate_passes(bounds: Rect2, gate: Dictionary, radius: float, cell: float = 6.0) -> bool:
+	var mouth: Vector2 = gate["mouth"]
+	var across: Vector2 = gate["across"]
+	var normal: Vector2 = gate["normal"]
+	var half_width := float(gate["width"]) * 0.5
+	var half_rows := int(ceil((radius + cell * 3.0) / cell))
+	var columns := int(ceil(half_width * 2.0 / cell)) + 1
+	var rows := half_rows * 2 + 1
+	var inner := bounds.grow(-radius)
+	var free := PackedByteArray()
+	free.resize(columns * rows)
+
+	for row in range(rows):
+		for column in range(columns):
+			var at := mouth \
+				+ across * (-half_width + float(column) * cell) \
+				+ normal * (float(row - half_rows) * cell)
+			free[row * columns + column] = 1 if inner.has_point(at) and not blocked(at, radius) else 0
+
+	var seen := PackedByteArray()
+	seen.resize(free.size())
+	var queue := PackedInt32Array()
+
+	for index in range(half_rows * columns):
+		if free[index] == 1:
+			seen[index] = 1
+			queue.append(index)
+
+	var head := 0
+
+	while head < queue.size():
+		var index := queue[head]
+		head += 1
+
+		if index / columns > half_rows:
+			return true
+
+		for next in _neighbours(index, columns, rows):
+			if free[next] == 1 and seen[next] == 0:
+				seen[next] = 1
+				queue.append(next)
+
+	return false
+
+
+static func _neighbours(index: int, columns: int, rows: int) -> PackedInt32Array:
+	var out := PackedInt32Array()
+	var column := index % columns
+	var row := index / columns
+
+	if column > 0:
+		out.append(index - 1)
+	if column < columns - 1:
+		out.append(index + 1)
+	if row > 0:
+		out.append(index - columns)
+	if row < rows - 1:
+		out.append(index + columns)
+
+	return out
+
+
+## The whole-world sweep: which of the floor a monster of [param radius] can get to from
+## [param from], sampled on a grid of [param cell].
+##
+## Returns `{"free": int, "reached": int, "stranded": PackedVector2Array}` — the sampled
+## points a monster that size can stand on, how many of those the fill from [param from]
+## got to, and the ones it did not. `free - reached` is floor nobody that size can reach:
+## deliberate for a grown monster behind a gate it has outgrown, and a bug at the starting
+## size — a pocket a spawn can land in and never leave, or one the food fills and nobody
+## eats.
+func reach(bounds: Rect2, from: Vector2, radius: float, cell: float = 24.0) -> Dictionary:
+	var grid := _grid(bounds, radius, cell)
+	var columns: int = grid["columns"]
+	var rows: int = grid["rows"]
+	var free: PackedByteArray = grid["free"]
+	var start := _cell_of(bounds, from, cell, columns, rows)
+	var seen := _fill(free, columns, rows, start, _diagonal_check(bounds, radius, cell, columns))
+	var total := 0
+	var reached := 0
+	var stranded := PackedVector2Array()
+
+	for index in range(free.size()):
+		if free[index] == 0:
+			continue
+
+		total += 1
+
+		if seen[index] == 1:
+			reached += 1
+		else:
+			stranded.append(_centre_of(bounds, index, cell, columns))
+
+	return {"free": total, "reached": reached, "stranded": stranded}
+
+
+## A route from [param from] to [param to] for a monster of [param radius], as waypoints
+## no straight leg of which passes through a rock, or nothing when there is none.
+##
+## [b]The general answer [method route_across] gives for barriers[/b]: that one knows the
+## reef's chains and steers by channel; this knows nothing but the discs, so it answers
+## for a ring, a den and anything after them. A grid fill for the path and then the
+## string pulled tight — each waypoint is the furthest point on the path still in a
+## clear straight line — so a monster steering at the next one is never steering at a
+## point on the far side of a rock.
+func route_to(bounds: Rect2, from: Vector2, to: Vector2, radius: float, cell: float = 24.0) -> PackedVector2Array:
+	var grid := _grid(bounds, radius, cell)
+	var columns: int = grid["columns"]
+	var rows: int = grid["rows"]
+	var free: PackedByteArray = grid["free"]
+	var start := _cell_of(bounds, from, cell, columns, rows)
+	var goal := _cell_of(bounds, to, cell, columns, rows)
+
+	if start < 0 or goal < 0 or free[start] == 0 or free[goal] == 0:
+		return PackedVector2Array()
+
+	var parent := PackedInt32Array()
+	parent.resize(free.size())
+	parent.fill(-1)
+	parent[start] = start
+	var queue := PackedInt32Array([start])
+	var head := 0
+
+	var diagonal := _diagonal_check(bounds, radius, cell, columns)
+
+	while head < queue.size() and parent[goal] == -1:
+		var index := queue[head]
+		head += 1
+
+		for next in _steps(index, columns, rows, free, diagonal):
+			if free[next] == 1 and parent[next] == -1:
+				parent[next] = index
+				queue.append(next)
+
+	if parent[goal] == -1:
+		return PackedVector2Array()
+
+	var path := PackedVector2Array([to])
+	var walk := parent[goal]
+
+	while walk != start:
+		path.append(_centre_of(bounds, walk, cell, columns))
+		walk = parent[walk]
+
+	path.append(from)
+	path.reverse()
+
+	var out := PackedVector2Array()
+	var here := 0
+
+	while here < path.size() - 1:
+		var furthest := here + 1
+
+		for ahead in range(path.size() - 1, here, -1):
+			if _clear_line(path[here], path[ahead], radius, cell * 0.5):
+				furthest = ahead
+				break
+
+		out.append(path[furthest])
+		here = furthest
+
+	return out
+
+
+func _clear_line(from: Vector2, to: Vector2, radius: float, step: float) -> bool:
+	var steps := maxi(1, int(ceil(from.distance_to(to) / step)))
+
+	for index in range(steps + 1):
+		if blocked(from.lerp(to, float(index) / float(steps)), radius):
+			return false
+
+	return true
+
+
+func _grid(bounds: Rect2, radius: float, cell: float) -> Dictionary:
+	var columns := int(floor(bounds.size.x / cell))
+	var rows := int(floor(bounds.size.y / cell))
+	var inner := bounds.grow(-radius)
+	var free := PackedByteArray()
+	free.resize(columns * rows)
+
+	for index in range(columns * rows):
+		var at := _centre_of(bounds, index, cell, columns)
+		free[index] = 1 if inner.has_point(at) and not blocked(at, radius) else 0
+
+	return {"columns": columns, "rows": rows, "free": free}
+
+
+static func _centre_of(bounds: Rect2, index: int, cell: float, columns: int) -> Vector2:
+	return bounds.position + Vector2(
+		(float(index % columns) + 0.5) * cell, (float(index / columns) + 0.5) * cell
+	)
+
+
+static func _cell_of(bounds: Rect2, at: Vector2, cell: float, columns: int, rows: int) -> int:
+	var column := int(floor((at.x - bounds.position.x) / cell))
+	var row := int(floor((at.y - bounds.position.y) / cell))
+
+	if column < 0 or row < 0 or column >= columns or row >= rows:
+		return -1
+
+	return row * columns + column
+
+
+## Eight ways out of a cell rather than four. [b]Four was a finding:[/b] a diagonal gate's
+## outer funnel narrows along the diagonal, so a sampled point in it can be free while
+## both its orthogonal neighbours are inside the rocks either side — reachable by any
+## monster walking in along the diagonal, stranded to a fill that can only step across.
+## The warrens' four diagonal gates each reported one such point. A diagonal step is
+## taken when either orthogonal neighbour is free (it is then two orthogonal steps) or
+## the midpoint of the step is clear, so it cannot hop between two rocks.
+static func _steps(index: int, columns: int, rows: int, free: PackedByteArray, diagonal: Callable) -> PackedInt32Array:
+	var out := _neighbours(index, columns, rows)
+	var column := index % columns
+	var row := index / columns
+
+	for dy in [-1, 1]:
+		for dx in [-1, 1]:
+			var c: int = column + dx
+			var r: int = row + dy
+
+			if c < 0 or r < 0 or c >= columns or r >= rows:
+				continue
+
+			var next: int = r * columns + c
+
+			if free[next] == 0:
+				continue
+
+			if free[row * columns + c] == 1 or free[r * columns + column] == 1 or diagonal.call(index, next):
+				out.append(next)
+
+	return out
+
+
+func _diagonal_check(bounds: Rect2, radius: float, cell: float, columns: int) -> Callable:
+	return func(from: int, to: int) -> bool:
+		var mid := (_centre_of(bounds, from, cell, columns) + _centre_of(bounds, to, cell, columns)) * 0.5
+		return not blocked(mid, radius)
+
+
+static func _fill(free: PackedByteArray, columns: int, rows: int, start: int, diagonal: Callable) -> PackedByteArray:
+	var seen := PackedByteArray()
+	seen.resize(free.size())
+
+	if start < 0 or free[start] == 0:
+		return seen
+
+	seen[start] = 1
+	var queue := PackedInt32Array([start])
+	var head := 0
+
+	while head < queue.size():
+		var index := queue[head]
+		head += 1
+
+		for next in _steps(index, columns, rows, free, diagonal):
+			if free[next] == 1 and seen[next] == 0:
+				seen[next] = 1
+				queue.append(next)
+
+	return seen
+
+
 # --- Resolving -------------------------------------------------------------
 
 ## Pushes one moving circle out of anything it is inside, and takes the velocity with it.
@@ -770,6 +1224,7 @@ func describe() -> Dictionary:
 		"id": String(id),
 		"blocks": blocks.size(),
 		"chains": chains.size(),
+		"rings": rings.size(),
 		"gap": narrowest_gap() if not blocks.is_empty() else 0.0,
 	}
 

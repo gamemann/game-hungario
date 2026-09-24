@@ -153,6 +153,11 @@ static func gauntlet() -> HungryPreset:
 ## [member merge_delay_sec], in the one part of the map where being in two halves is most
 ## dangerous. A pepper does the same thing to somebody else, against their will, which
 ## makes a throwable a way through a wall as well as a way into a fight.
+##
+## [b]And the middle has a middle: the den.[/b] Four rocks round the centre with gates of
+## 202 — a mass of about 160, a tenth of [member win_mass] — so the one place on the map
+## nobody can follow a newly spawned or just-eaten player into is the very centre, and
+## getting there means crossing the middle first. See [method HungryLayout._append_den].
 static func warrens() -> HungryPreset:
 	var preset := HungryPreset.new()
 	preset.id = &"warrens"
@@ -168,8 +173,10 @@ static func warrens() -> HungryPreset:
 	# covers about an eighth of the rectangle and the field is scattered over the whole of
 	# it, so a target set against the rectangle would be an eighth of a mode's food buried
 	# inside rocks. The world culls what lands in one — see `HungryWorld._cull_blocked` —
-	# and this number is what is left standing.
-	preset.food_target = 620
+	# and this number is what is left standing. 620 with the ring and the corners; the den
+	# (2026-09-24) put another 0.23 million square units under rock, and 609 is Classic's
+	# 40.7 per million on the 14.98 million that is left.
+	preset.food_target = 609
 
 	# [b]Above Classic's density, unlike the food, and that is the mode rather than an
 	# oversight.[/b] Warrens is full of people you cannot reach; a throwable is how you
