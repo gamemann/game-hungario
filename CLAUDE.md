@@ -23,7 +23,7 @@ dot-moderation's live tools are here (`HungryModTools`, built in the module beca
 
 **A spawn tells dot-moderation**, off `HungryWorld.player_spawned` (`_watch_spawns`, re-wired on a game change), so a respawn switches noclip and freeze off through the handlers. The bits live on the monster, which outlives its pieces; without the hook they would ride it into the next life.
 
-**Found on the way, and not fixed here:** a snapshot carries an entity only when it changed against the acked baseline, and `DotNetPredictor` reconciles only what a snapshot carries — so a predicted piece whose server state stands still is never corrected. The naive freeze control shows it: the client walks 113 units away and is never pulled back. The shipped freeze does not meet it, because the admin bit changing is what reaches the client.
+**Found on the way, and fixed in dot-net since (f99fde3, 2026-09-24):** a predicted piece the server held still was never pulled back. The mechanism was not the one first written here — a snapshot did carry the entity, with an empty body, and the client filled the reconcile values from its own prediction, so "nothing new" was adopted as "you are right" and the lead replayed twice (113 units away in the naive freeze control, and climbing). dot-net rewinds to the server's whole state now, and the control (c968108) asserts the rubber band a server-only freeze should produce: a 1.9 to 9.4 unit sawtooth whose floor does not climb. The shipped freeze never met the bug, because the admin bit changing is what reaches the client.
 
 The rest is refused with a reason `modtools` prints. Gravity, because a top-down arena has none. God and buddha because being eaten is the game, and health and slap because a monster has mass, not health.
 
@@ -213,7 +213,7 @@ pack, and a version that climbs out of the mount.
 
 ## Sound is arithmetic
 
-`HungrySound` bakes ten voices at startup: a sine sweep with a hash-derived noise
+`HungrySound` bakes fourteen voices at startup: a sine sweep with a hash-derived noise
 component under an attack-decay envelope. It ships no audio files, the same way dot-ui
 ships no art and dot-2d draws nothing.
 
@@ -511,9 +511,11 @@ leaving: `extend_needs_majority` (two documented policies, one behaviour),
 can never do anything), and `begin_on_apply` (both the director and the host announcing one
 play halves every cooldown).
 
-**Four joins that were missing, found finishing the map-chooser work (2026-09-23).** The director self-advanced *and* the module advanced it every tick, so every vote clock ran at double speed — a fifteen-minute mode ended in seven and a half while `limit`, advanced once, said otherwise. No command existed: a chat `!rtv` goes to the console here and the console had no `rtv`, so the client's wire was the only way to vote; `HungryMaps.install_commands` puts `DotVoteCommands` on the module, voters keyed as the bare player id the wire already uses. Nothing called `note_score` or `note_round_end`: the leading score is now the biggest monster's mass (what a round here is won on, so a vote `score_limit` is a mass), polled once a tick against the clock's own memory, and dot-match's `round_ended` reaches the director — which is what makes `apply: end_of_round` mean the end of a round rather than the clock. And the wire's `extend` let any player extend the mode as often as the rules allowed; it is an admin's now, as in game-playground. `dedicated` arms the score half: without the poll, two checks fire.
+**Four joins that were missing, found finishing the map-chooser work (2026-09-23).** The director self-advanced *and* the module advanced it every tick, so every vote clock ran at double speed — a fifteen-minute mode ended in seven and a half while the descriptive `DotMapTimeLimit` beside it, advanced once, said otherwise. No command existed: a chat `!rtv` goes to the console here and the console had no `rtv`, so the client's wire was the only way to vote; `HungryMaps.install_commands` puts `DotVoteCommands` on the module, voters keyed as the bare player id the wire already uses. Nothing called `note_score` or `note_round_end`: the leading score is now the biggest monster's mass (what a round here is won on, so a vote `score_limit` is a mass), polled once a tick against the clock's own memory, and dot-match's `round_ended` reaches the director — which is what makes `apply: end_of_round` mean the end of a round rather than the clock. And the wire's `extend` let any player extend the mode as often as the rules allowed; it is an admin's now, as in game-playground. `dedicated` arms the score half: without the poll, two checks fire.
 
-**The vote's cues do not reach this game's client yet**, deliberately left: the sound bank is generated per id in `HungrySound`, and a cue needs a recipe there, a kind in `HungryEvents`, the bridge and the client — client files outside what that pass was scoped to. arena, g2gfast and playground carry it as a `VOTE` event and are the pattern to copy.
+**The vote is heard, and counted (2026-09-24).** The rules name four cue ids, `HungryEvents.CUE_VOTE_*` — on the wire file because it is the one both ends load, so the server's rules, the presentation's catalogue and `HungrySoundSink.CUES` read one copy — and `HungryMaps.cue_due` carries each cue and each countdown second to the module, which sends them as `HungryEvents.Kind.VOTE` (appended last, so every kind keeps its number). The client plays a cue through dot-audio into `HungrySound`, which bakes four new voices for them: pure tones with no grit, because everything else in the bank is about a monster and a ballot is about the server. A ballot is now counted down to for five seconds (three for a runoff), and the count is drawn in **one label under the round clock**, not in the feed where this game's notices go: the feed holds five lines, and a count of one line a second would push out the chat line that announced the vote. `headless_presentation` asserts every cue is catalogued, flat, below the three that must never be refused, and baked; `headless_net` sends a cue and a second across the link; `dedicated` asserts a ballot is counted down to and its warning and first second reach the module. `tools/screenshot_map.sh` renders a fifth frame, `<mode>_vote`.
+
+**The descriptive clock is gone, because it never followed an extend.** `HungryMaps.limit` was a `DotMapTimeLimit` built from the same rules and advanced beside the director, and only `describe_lines` read it: after the players voted to extend, `hungry_vote status` still said the old limit. The `map time` line reads the vote's own clock now, and dot-vote's `timeleft` already did. `dedicated` extends the mode and asserts the line moves by the extension (armed by printing the rules' duration instead: it fired). `dedicated` also has a CHECKS total now; it had only the section counter.
 
 ## Five modes, and the last three are shapes rather than dials
 
@@ -686,14 +688,14 @@ done
 
 godot --headless --path . res://examples/headless_round.tscn   # 286 — the game
 godot --headless --path . res://examples/headless_stack.tscn   #  24 checks
-godot --headless --path . res://examples/headless_net.tscn     # 135 — the netcode
-godot --headless --path . res://examples/dedicated.tscn        # 185 — a real DotServer
+godot --headless --path . res://examples/headless_net.tscn     # 139 — the netcode
+godot --headless --path . res://examples/dedicated.tscn        # 187 — a real DotServer
 godot --headless --path . res://examples/sandbox.tscn          #  91 — two real clients
 godot --headless --path . res://examples/content.tscn          #  46 — the cloud path
-godot --headless --path . res://examples/headless_presentation.tscn  # 48 — the client half
+godot --headless --path . res://examples/headless_presentation.tscn  # 56 — the client half
 ```
 
-810 checks across seven suites. Add `-- --verbose` to `dedicated`, `sandbox` or `content` when one fails and
+829 checks across seven suites. Add `-- --verbose` to `dedicated`, `sandbox` or `content` when one fails and
 the reason is in a log line rather than in the assertion.
 
 **Run `headless_round` after any change to dot-2d** and **`headless_net` after any change
@@ -793,7 +795,7 @@ progress, which is the one thing that system must never do by accident.
 interesting part of this game's integration is what it **refuses to replace**.
 
 **dot-audio does not replace `HungrySound`.** This game bakes its whole bank
-arithmetically at boot: ten cues, 22 kHz, no files, byte-identical everywhere. That is the
+arithmetically at boot: fourteen cues, 22 kHz, no files, byte-identical everywhere. That is the
 best thing about its audio and throwing it away for an addon that names files would be a
 strict downgrade. So `HungrySoundSink` is dot-audio's sink and the generation stays, and
 what the addon adds is the half that was never there: a catalogue, per-id concurrency caps,

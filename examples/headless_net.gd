@@ -36,7 +36,7 @@ const SNAPSHOT_RATE := 20
 const SEED := 20260828
 const CLIENT_PEER := 2
 
-const CHECKS := 136
+const CHECKS := 139
 
 var _passed := 0
 var _failed := 0
@@ -86,6 +86,7 @@ func _run() -> void:
 		_test_interpolation()
 		_test_loadout()
 		_test_direction_enforced()
+		_test_vote_wire()
 		_test_loss()
 		_test_game_change()
 
@@ -588,6 +589,44 @@ func _on_client_send(method: StringName, _peer_id: int, payload: PackedByteArray
 
 
 ## Delivers everything in flight, in order.
+## The mode vote's cue and countdown, server to client.
+##
+## Before this nothing carried either: the ballot went out as chat and the vote's sounds
+## and its count went nowhere, so a client heard a ballot open by reading about it.
+func _test_vote_wire() -> void:
+	_section("the mode vote's cues over the link")
+
+	var round_trip := HungryEvents.read_vote_cue(
+		DotNetReader.new(HungryEvents.write_vote_cue(HungryEvents.CUE_VOTE_COUNT, 4, true))
+	)
+	_check(
+		bool(round_trip["ok"]) and String(round_trip["cue"]) == HungryEvents.CUE_VOTE_COUNT
+			and int(round_trip["seconds_left"]) == 4 and bool(round_trip["runoff"]),
+		"a VOTE round-trips, with the cue, the second and the runoff flag"
+	)
+	_check(
+		HungryEvents.Kind.VOTE == HungryEvents.Kind.size() - 1,
+		"and VOTE is the last kind, so every kind before it kept its number on the wire"
+	)
+
+	var arrived: Array[Dictionary] = []
+	var on_vote := func(info: Dictionary) -> void: arrived.append(info)
+	_client_bridge.vote_cue_received.connect(on_vote)
+	_server_bridge.broadcast_vote_cue(StringName(HungryEvents.CUE_VOTE_WARNING), 0, false)
+	_server_bridge.broadcast_vote_cue(&"", 5, false)
+	_flush()
+	_client_bridge.vote_cue_received.disconnect(on_vote)
+
+	_check(
+		arrived.size() == 2
+			and String(arrived[0]["cue"]) == HungryEvents.CUE_VOTE_WARNING
+			and int(arrived[1]["seconds_left"]) == 5,
+		"a cue and a countdown second reach a ready client, in order (%s)" % str(arrived)
+	)
+
+	_done()
+
+
 func _flush() -> void:
 	# Copied and cleared first: delivering an event can cause a reply, and appending to
 	# the array being walked would deliver it inside the same flush.

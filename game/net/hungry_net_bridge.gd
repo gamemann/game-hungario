@@ -94,6 +94,10 @@ signal hazard_received(state: Dictionary)
 ## Somebody earned something. Client side.
 signal progress_received(state: Dictionary)
 
+## The mode vote's cue and countdown second, from [method HungryEvents.read_vote_cue].
+## Client side.
+signal vote_cue_received(state: Dictionary)
+
 var world: HungryWorld = null
 ## Where the clock learns how long the link is, in milliseconds. dot-net never
 ## touches a transport and cannot measure it; dot-server's heartbeat already does
@@ -1156,6 +1160,13 @@ func _on_item_taken(player_id: int, _grid_id: int, _item: StringName) -> void:
 	send_carry(player_id)
 
 
+## The mode vote's cue or countdown second, to every ready peer. Server side.
+func broadcast_vote_cue(cue: StringName, seconds_left: int, runoff: bool) -> void:
+	_broadcast(
+		HungryEvents.Kind.VOTE, HungryEvents.write_vote_cue(String(cue), seconds_left, runoff)
+	)
+
+
 func send_carry(player_id: int) -> void:
 	var monster := world.monster_for(player_id)
 	var peer_id := peer_for_player(player_id)
@@ -1227,6 +1238,12 @@ func _on_event(message: DotNetMessage) -> void:
 
 			if bool(earned["ok"]):
 				progress_received.emit(earned)
+
+		HungryEvents.Kind.VOTE:
+			var voted := HungryEvents.read_vote_cue(reader)
+
+			if bool(voted["ok"]):
+				vote_cue_received.emit(voted)
 
 		HungryEvents.Kind.SPAWN:
 			_apply_spawn(reader)

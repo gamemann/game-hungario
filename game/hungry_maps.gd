@@ -1,6 +1,7 @@
 extends Node
 
 const HungryModule := preload("hungry_module.gd")
+const HungryEvents := preload("net/hungry_events.gd")
 
 ## What plays next, and who decides.
 ##
@@ -47,10 +48,10 @@ const CHANNEL := "hungry.maps"
 ## [/codeblock]
 ##
 ## [code]DOT_VOTE_EXTEND_SECONDS=300[/code] or [code]--vote-include-extend=false[/code]
-## do the same for one run. [b]The mode timer follows[/b]: [member limit] is built from
-## the layered rules, so an owner's [code]duration_sec[/code] and extend settings reach
-## [code]timeleft[/code] as well as the ballot. A result that does not validate is
-## refused whole and the defaults stand, with the reason in the log.
+## do the same for one run. [code]timeleft[/code] and [method describe_lines] both read
+## the vote's own clock, so an owner's [code]duration_sec[/code] and every extend reach
+## them as well as the ballot. A result that does not validate is refused whole and the
+## defaults stand, with the reason in the log.
 const CONFIG_PATH := "user://cfg/hungry_vote.json"
 
 ## The key in the running game's descriptor metadata an operator's overrides are read
@@ -64,11 +65,15 @@ signal change_due(game_id: StringName)
 ## Something a player should be told: the ballot, the tally, a warning.
 signal announced(line: String)
 
+## Something for every client to hear or count: a [code]cue_*[/code] id, or a second of
+## the countdown before a ballot. One of the two is empty or zero. The module puts it on
+## the wire as [constant HungryEvents.Kind].VOTE.
+signal cue_due(cue: StringName, seconds_left: int, runoff: bool)
+
 
 var catalogue: DotMapCatalogue = null
 var rotation: DotMapRotation = null
 var director: DotVoteDirector = null
-var limit: DotMapTimeLimit = null
 
 ## dot-server's game manager, which is what a vote actually applies through.
 var games: Object = null
@@ -217,6 +222,20 @@ static func vote_rules() -> DotVoteRules:
 	rules.cooldown_mode = DotVoteRules.Cooldown.PLAYS
 	rules.apply = DotVoteRules.Apply.END_OF_ROUND
 	rules.apply_delay_sec = 5.0
+
+	# Five seconds' warning, counted down on every client, before a ballot opens over a
+	# chase. Shorter than a shooter's ten: a round here is a few minutes and the ballot
+	# changes nothing until it ends, so the warning is for finishing a bite, not a fight.
+	rules.vote_warning_sec = 5.0
+	rules.runoff_warning_sec = 3.0
+
+	# The ids the client's catalogue plays, from the wire's one copy of them. dot-vote
+	# ships every cue empty and names no audio class.
+	rules.cue_vote_start = HungryEvents.CUE_VOTE_START
+	rules.cue_vote_end = HungryEvents.CUE_VOTE_END
+	rules.cue_warning = HungryEvents.CUE_VOTE_WARNING
+	rules.cue_runoff_warning = HungryEvents.CUE_VOTE_WARNING
+	rules.cue_countdown = HungryEvents.CUE_VOTE_COUNT
 	return rules
 
 
@@ -269,8 +288,8 @@ func setup(p_games: Object) -> DotResult:
 	director.begin_on_apply = false
 	# [b]Off: the module advances it, once per world tick.[/b] It was on, AND the module
 	# called `advance` every tick, so every clock in the vote counted twice — a fifteen-
-	# minute mode was over in seven and a half, and `limit` below, advanced once, said
-	# otherwise the whole time.
+	# minute mode was over in seven and a half, and the descriptive map clock that stood
+	# beside it, advanced once, said otherwise the whole time.
 	director.self_advance = false
 	director.register_service = false
 	director.player_count_fn = _player_count
@@ -282,20 +301,19 @@ func setup(p_games: Object) -> DotResult:
 		change_due.emit(id)
 	)
 
-	# The time limit is dot-map's, and it is the half dot-vote does not have: dot-vote
-	# knows when a vote is due and dot-map knows how long a map has left, which is what a
-	# `timeleft` command answers and what a warning counts down.
-	limit = DotMapTimeLimit.of(rules.duration_sec)
-	# [b]One warning mark, not dot-vote's list.[/b] `DotVoteRules.warn_marks()` is what
-	# the vote announces at; `DotMapTimeLimit.warn_at` is a single number, and giving it
-	# the first of the vote's marks is the honest mapping rather than pretending the two
-	# agree about a shape they do not share.
-	var marks := rules.warn_marks()
-	limit.warn_at = marks[0] if not marks.is_empty() else 120.0
-	limit.rtv_fraction = rules.rtv_fraction
-	limit.rtv_min_players = rules.rtv_min_players
-	limit.extend_seconds = rules.extend_seconds
-	limit.max_extends = rules.max_extends
+	# Two signals, two messages: dot-vote emits a countdown second and that second's cue
+	# separately, and merging them here would be this file deciding which is which.
+	director.cue.connect(func(id: StringName) -> void: cue_due.emit(id, 0, false))
+	director.countdown_tick.connect(func(seconds_left: int, runoff: bool) -> void:
+		cue_due.emit(&"", seconds_left, runoff)
+	)
+
+	# [b]No second clock.[/b] A `DotMapTimeLimit` stood here, built from the same rules
+	# and advanced beside the director, "for `timeleft`" — and nothing but `describe_lines`
+	# ever read it. It never heard an extend, a ballot that kept the mode, or a clock the
+	# vote stopped, so the one line an operator reads said fifteen minutes on a mode the
+	# players had just voted to extend. The vote's own clock answers all of that, and
+	# dot-vote's `timeleft` command already reads it.
 
 	return DotResult.success(null)
 
@@ -312,9 +330,6 @@ func note_playing(game_id: StringName) -> void:
 	if director != null:
 		director.begin(game_id)
 
-	if limit != null:
-		limit.start()
-
 	_bind_match()
 
 
@@ -322,9 +337,6 @@ func advance(delta: float) -> void:
 	if director != null:
 		director.advance(delta)
 		_report_score()
-
-	if limit != null:
-		limit.advance(delta)
 
 
 ## The leading score, once a tick and only when it moved.
@@ -430,10 +442,9 @@ func _is_admin(voter: StringName) -> bool:
 func describe_lines() -> PackedStringArray:
 	var out := PackedStringArray()
 
-	if limit != null:
-		out.append("map time     %s" % limit.formatted_remaining())
-
+	# The vote's clock: the one that ends a mode, and the one an extend moves.
 	if director != null:
+		out.append("map time     %s" % director.clock.formatted_remaining())
 		out.append_array(director.describe_lines())
 
 	return out

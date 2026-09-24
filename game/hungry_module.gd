@@ -511,6 +511,13 @@ func _build_maps() -> DotResult:
 	maps.change_due.connect(_on_change_due)
 	maps.announced.connect(_on_vote_announced)
 
+	# The cues and the countdown, to every client. The ballot goes out as chat through
+	# `announced`; a sound and a number a HUD counts are what chat cannot carry.
+	maps.cue_due.connect(func(cue: StringName, seconds_left: int, runoff: bool) -> void:
+		if bridge != null:
+			bridge.broadcast_vote_cue(cue, seconds_left, runoff)
+	)
+
 	# The match a round ends in, and the leading score, for the vote. Callables, because a
 	# mode change replaces the world and the match with it.
 	maps.match_fn = func() -> DotMatch:

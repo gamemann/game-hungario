@@ -34,12 +34,27 @@ var mass_bar: DotStatBar = null
 var leaderboard: DotTableView = null
 var feed: DotFeedView = null
 var clock_label: Label = null
+
+## The countdown before a mode-vote ballot, directly under the round clock.
+##
+## [b]Not the feed, although the feed is where this game's notices go.[/b] The feed holds
+## five lines, and a countdown is one line a second: a five-second one would push out the
+## chat line announcing the vote, and whatever anybody said, and leave a column of
+## numbers. One label that changes in place says the same thing and costs nothing else.
+var vote_label: Label = null
 var carry_label: Label = null
 var status_label: Label = null
 var minimap: Minimap = null
 
 ## The on-screen split and throw buttons, on a device that wants them.
 var touch: HungryTouch = null
+
+## When [member vote_label] stops showing its last second, in [method Time.get_ticks_msec].
+var _vote_until_msec: int = 0
+
+## How long a countdown second stays up without the next one. Over a second, so a tick
+## arriving a little late over the wire does not blink the line off between numbers.
+const VOTE_LINGER_MSEC := 1500
 
 
 ## Everybody's position on one small rectangle.
@@ -201,6 +216,21 @@ func build(p_world: HungryWorld, p_bridge: HungryNetBridge, p_player_id: int) ->
 	clock_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(clock_label)
 
+	vote_label = Label.new()
+	vote_label.name = "VoteCountdown"
+	vote_label.set_anchors_preset(Control.PRESET_CENTER_TOP)
+	# Offsets, because `set_anchors_preset` does not set them, and a centred label with
+	# none is a zero-width column the text overflows out of to the right. Wide enough for
+	# "Runoff in 3…" at any font this HUD uses, and under the clock rather than over it.
+	vote_label.offset_left = -200.0
+	vote_label.offset_right = 200.0
+	vote_label.offset_top = 38.0
+	vote_label.offset_bottom = 62.0
+	vote_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	vote_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vote_label.add_theme_color_override("font_color", Color(1.0, 0.85, 0.40))
+	add_child(vote_label)
+
 	if HungryTouch.wanted():
 		touch = HungryTouch.make()
 		add_child(touch)
@@ -298,6 +328,16 @@ func _name_of(id: int) -> String:
 	return "somebody" if id == 0 else "Player %d" % id
 
 
+## One second of the countdown before a mode-vote ballot. Driven from
+## [signal HungryNetBridge.vote_cue_received].
+func vote_countdown(seconds_left: int, runoff: bool) -> void:
+	if vote_label == null:
+		return
+
+	vote_label.text = "%s in %d…" % ["Runoff" if runoff else "Mode vote", seconds_left]
+	_vote_until_msec = Time.get_ticks_msec() + VOTE_LINGER_MSEC
+
+
 # --- Refreshing ------------------------------------------------------------
 
 ## Rebuilds the leaderboard rows.
@@ -347,6 +387,7 @@ func _process(_delta: float) -> void:
 		return
 
 	_refresh_clock()
+	_refresh_vote()
 	_refresh_carry()
 	_refresh_status()
 
@@ -372,6 +413,11 @@ func _refresh_clock() -> void:
 		state if remaining < 0.0
 		else "%d:%02d" % [int(remaining) / 60, int(remaining) % 60]
 	)
+
+
+func _refresh_vote() -> void:
+	if vote_label != null and vote_label.text != "" and Time.get_ticks_msec() > _vote_until_msec:
+		vote_label.text = ""
 
 
 func _refresh_carry() -> void:
@@ -430,5 +476,6 @@ func describe() -> Dictionary:
 		"player": player_id,
 		"rows": leaderboard.row_count() if leaderboard != null else 0,
 		"feed": feed.line_count() if feed != null else 0,
+		"vote": vote_label.text if vote_label != null else "",
 		"touch": touch.describe() if touch != null else null,
 	}

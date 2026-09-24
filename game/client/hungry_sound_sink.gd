@@ -1,12 +1,13 @@
 extends DotAudioSink
 
 const HungrySound := preload("hungry_sound.gd")
+const HungryEvents := preload("../net/hungry_events.gd")
 
 ## dot-audio's sink, backed by the sound this game already generates for itself.
 ##
 ## [b]This is the whole shape of hungario's audio integration, and it is deliberately not
 ## "replace `HungrySound` with dot-audio".[/b] This game bakes its entire bank
-## arithmetically at boot — ten cues, 22 kHz, no files — and that is the best thing about
+## arithmetically at boot — fourteen cues, 22 kHz, no files — and that is the best thing about
 ## its audio: it ships nothing, it works on every platform, and it is the only game in the
 ## family that makes a noise today. Throwing it away for an addon that names files would
 ## be a strict downgrade.
@@ -40,6 +41,12 @@ const CUES := {
 	"devour": HungrySound.Cue.DEVOUR,
 	"die": HungrySound.Cue.DIE,
 	"click": HungrySound.Cue.CLICK,
+	# The mode vote's, keyed by the wire's own ids so the server and this map cannot spell
+	# one differently.
+	HungryEvents.CUE_VOTE_START: HungrySound.Cue.VOTE_START,
+	HungryEvents.CUE_VOTE_END: HungrySound.Cue.VOTE_END,
+	HungryEvents.CUE_VOTE_WARNING: HungrySound.Cue.VOTE_WARNING,
+	HungryEvents.CUE_VOTE_COUNT: HungrySound.Cue.VOTE_COUNT,
 }
 
 var sound: HungrySound = null

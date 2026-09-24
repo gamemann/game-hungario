@@ -56,6 +56,9 @@ enum Kind {
 	HAZARD,
 	## A board, a rank or an achievement somebody just earned.
 	PROGRESS,
+	## The mode vote: a sound cue to play, or a second of the countdown before a ballot.
+	## Last, because a kind is its index on the wire.
+	VOTE,
 }
 
 ## What a client asks for.
@@ -733,3 +736,42 @@ static func write_vote(token: String) -> PackedByteArray:
 
 static func read_vote(reader: DotNetReader) -> String:
 	return reader.read_string(VOTE_TOKEN_BYTES)
+
+
+# --- The vote's cues -------------------------------------------------------
+
+## The mode vote's sound cues, as ids. [b]One copy[/b]: [HungryMaps] names them in the
+## vote's rules, the presentation's catalogue defines them, and [HungrySoundSink] maps them
+## to a baked voice — all three from here, because a cue the server sends and the client
+## spells differently is silence nobody hears as a bug. Here rather than in either end
+## because the wire is the one file both of them already load.
+const CUE_VOTE_START := "vote_start"
+const CUE_VOTE_END := "vote_end"
+const CUE_VOTE_WARNING := "vote_warning"
+const CUE_VOTE_COUNT := "vote_count"
+
+## Every vote cue, for a catalogue to define and a suite to check.
+const VOTE_CUES: Array[String] = [CUE_VOTE_START, CUE_VOTE_END, CUE_VOTE_WARNING, CUE_VOTE_COUNT]
+
+## Bytes a vote cue id may occupy. An id, never a path.
+const CUE_BYTES := 32
+
+
+## A mode-vote cue id (empty for none) and a countdown second (0 for none). Named `_cue`
+## because [method write_vote] is the other direction's: a player's token to the server.
+static func write_vote_cue(cue: String, seconds_left: int, runoff: bool) -> PackedByteArray:
+	var writer := _writer()
+	writer.write_string(cue, CUE_BYTES)
+	writer.write_uint(clampi(seconds_left, 0, 255), 8)
+	writer.write_bool(runoff)
+	return writer.to_bytes()
+
+
+static func read_vote_cue(reader: DotNetReader) -> Dictionary:
+	var out := {
+		"cue": reader.read_string(CUE_BYTES),
+		"seconds_left": reader.read_uint(8),
+		"runoff": reader.read_bool(),
+	}
+	out["ok"] = reader.ok()
+	return out

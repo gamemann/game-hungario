@@ -1,6 +1,7 @@
 extends SceneTree
 
 const HungryCamera := preload("../game/client/hungry_camera.gd")
+const HungryHud := preload("../game/client/hungry_hud.gd")
 const HungryPreset := preload("../game/hungry_preset.gd")
 const HungryRenderer := preload("../game/client/hungry_renderer.gd")
 const HungryWorld := preload("../game/hungry_world.gd")
@@ -25,6 +26,7 @@ const SETTLE := 4
 var _world: HungryWorld = null
 var _renderer: HungryRenderer = null
 var _camera: HungryCamera = null
+var _hud: HungryHud = null
 var _shots: Array[Dictionary] = []
 var _at := 0
 var _wait := SETTLE
@@ -102,10 +104,26 @@ func _initialize() -> void:
 	# if it looks like one from where a player sits — and the grown view is the one that
 	# says the mode still draws when the camera has zoomed out, which is the framing
 	# nothing in this project had ever rendered.
+	# The HUD, for the last frame only: the level frames are about the level. On a canvas
+	# layer, as the client has it, or the camera would carry it off the screen.
+	var layer := CanvasLayer.new()
+	layer.name = "HudLayer"
+	root.add_child(layer)
+	_hud = HungryHud.new()
+	_hud.name = "Hud"
+	_hud.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	layer.add_child(_hud)
+	_hud.build(_world, null, 1)
+	_hud.visible = false
+
 	_shots = [
 		{"name": "%s%s_arena" % [wanted, tag], "mass": 0.0, "whole": true},
 		{"name": "%s%s_gate" % [wanted, tag], "mass": 0.0, "whole": false},
 		{"name": "%s%s_grown" % [wanted, tag], "mass": preset.win_mass * 0.55, "whole": false},
+		# The countdown before a mode-vote ballot, under the round clock, with the chat line
+		# that announced it in the feed beside it — the two have to read as one thing and
+		# neither may sit on the other.
+		{"name": "%s%s_vote" % [wanted, tag], "mass": 0.0, "whole": false, "vote": true},
 	]
 
 
@@ -144,6 +162,11 @@ func _process(_delta: float) -> bool:
 			_camera.zoom_with_size = true
 			_camera.clamp_to_arena = true
 			_camera.monster_source = func() -> Object: return _world.monster_for(1)
+
+		if shot.has("vote"):
+			_hud.visible = true
+			_hud.say("A vote for what plays next starts in 5s.", Color(0.62, 0.78, 1.0))
+			_hud.vote_countdown(4, false)
 
 		_world.tick({})
 

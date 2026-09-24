@@ -1,6 +1,7 @@
 extends Node
 
 const HungryConfig := preload("../hungry_config.gd")
+const HungryEvents := preload("../net/hungry_events.gd")
 const HungryServices := preload("../hungry_services.gd")
 const HungrySound := preload("hungry_sound.gd")
 const HungrySoundSink := preload("hungry_sound_sink.gd")
@@ -260,6 +261,19 @@ static func sound_catalogue() -> DotAudioCatalogue:
 	click.cooldown_ms = 40
 	click.priority = 30
 	c.add(click)
+
+	# The mode vote's cues. Flat and on the interface bus: a ballot is about the server,
+	# not about a place in the arena, and one that got quieter the further a monster was
+	# from the origin would be one some players never heard. Under the three that change
+	# everything, so a ballot opening never costs somebody the sound of being eaten.
+	for vote_id in HungryEvents.VOTE_CUES:
+		var cue := DotAudioDef.new()
+		cue.id = StringName(vote_id)
+		cue.generated = true
+		cue.bus = &"UI"
+		cue.max_concurrent = 1
+		cue.priority = 70
+		c.add(cue)
 
 	return c
 
@@ -564,6 +578,16 @@ func on_throw() -> void:
 func on_died() -> void:
 	audio.play(&"die")
 	fx.flash(&"threat")
+
+
+## A mode-vote cue from the server. Empty is silence, and an id this catalogue does not
+## have is dot-audio's silent refusal: a server with a sound set this client was not built
+## with should cost a noise, not a log line per second.
+func on_vote_cue(id: StringName) -> int:
+	if id == &"" or audio == null:
+		return 0
+
+	return audio.play(id)
 
 
 func on_click() -> void:

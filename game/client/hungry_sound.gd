@@ -52,6 +52,14 @@ enum Cue {
 	DIE,
 	## A menu.
 	CLICK,
+	## A mode-vote ballot opened. Appended, so every cue above keeps its number.
+	VOTE_START,
+	## A ballot closed, whatever it decided.
+	VOTE_END,
+	## The countdown before a ballot started.
+	VOTE_WARNING,
+	## One second of that countdown.
+	VOTE_COUNT,
 }
 
 ## Volume in decibels, applied to every voice. A game whose sound cannot be turned down is
@@ -94,6 +102,16 @@ func build() -> void:
 		Cue.DEVOUR: bake(220.0, 110.0, 0.30, 0.45, 0.25),
 		Cue.DIE: bake(320.0, 70.0, 0.55, 0.45, 0.40),
 		Cue.CLICK: bake(880.0, 880.0, 0.04, 0.22, 0.0),
+		# The vote's four are pure tones with no noise in them, and that is the whole
+		# distinction: everything above is about a monster, and every one that is not a
+		# menu click has grit. A ballot is about the server, so it should sound like the
+		# interface rather than like something being eaten. Up to open, down to close.
+		Cue.VOTE_START: bake(440.0, 880.0, 0.22, 0.30, 0.0),
+		Cue.VOTE_END: bake(880.0, 440.0, 0.22, 0.26, 0.0),
+		Cue.VOTE_WARNING: bake(660.0, 660.0, 0.30, 0.26, 0.0),
+		# Higher and shorter than the menu click, so a countdown is heard as a count and
+		# not as somebody else opening a menu.
+		Cue.VOTE_COUNT: bake(1320.0, 1320.0, 0.05, 0.22, 0.0),
 	}
 
 	for index in range(VOICES):

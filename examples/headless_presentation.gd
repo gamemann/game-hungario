@@ -6,6 +6,8 @@ const HungryPresentation := preload("../game/client/hungry_presentation.gd")
 const HungryServices := preload("../game/hungry_services.gd")
 const HungrySound := preload("../game/client/hungry_sound.gd")
 const HungrySoundSink := preload("../game/client/hungry_sound_sink.gd")
+const HungryEvents := preload("../game/net/hungry_events.gd")
+const HungryHud := preload("../game/client/hungry_hud.gd")
 
 ## Settings, audio, effects, the console and the private arena.
 ##
@@ -21,7 +23,7 @@ const HungrySoundSink := preload("../game/client/hungry_sound_sink.gd")
 ##
 ## Exits non-zero on any failure.
 
-const CHECKS := 48
+const CHECKS := 56
 
 var _passed := 0
 var _failed := 0
@@ -48,6 +50,7 @@ func _run() -> void:
 	_test_console()
 	_test_party()
 	_test_chat_box()
+	_test_the_vote_is_heard()
 
 	print("")
 	_check(
@@ -427,4 +430,77 @@ func _test_chat_box() -> void:
 	window.close()
 	_check(not p.swallows_input(), "and gives it back when it closes")
 
+	_done()
+
+
+# --- The mode vote ----------------------------------------------------------
+
+## The vote's cues, played through this game's own generated bank, and its countdown drawn.
+##
+## The server has named these ids in the vote's rules since the vote was wired, and no
+## client had a noise for any of them: the ballot was something a player read about.
+func _test_the_vote_is_heard() -> void:
+	_section("The mode vote is heard, through the bank, and counted on the HUD")
+
+	var p := _make()
+	var sink := p.audio.sink as HungrySoundSink
+
+	# The wire's constants are the one copy: the server's rules name them, this catalogue
+	# defines them and the sink maps them, so a cue the server sends and the client lacks
+	# cannot be a typo in one of three places.
+	var missing := PackedStringArray()
+	for id in HungryEvents.VOTE_CUES:
+		var d := p.audio.catalogue.find(StringName(id))
+		if d == null or d.priority >= 100 or d.kind != DotAudioDef.Kind.FLAT:
+			missing.append(id)
+	_check(
+		missing.is_empty(),
+		"every vote cue is in the catalogue, flat, and under the three that change everything (%s)"
+			% ", ".join(missing)
+	)
+	_check(
+		p.sound.baked() == HungrySound.Cue.size(),
+		"and every cue the bank names is baked, the vote's four included (%d of %d)"
+			% [p.sound.baked(), HungrySound.Cue.size()]
+	)
+
+	sink.forget()
+	_check(
+		p.on_vote_cue(StringName(HungryEvents.CUE_VOTE_START)) != 0,
+		"a ballot opening plays"
+	)
+	p.on_vote_cue(&"")
+	p.on_vote_cue(&"not_in_this_build")
+	_check(
+		sink.count_of(StringName(HungryEvents.CUE_VOTE_START)) == 1
+			and sink.count_of(&"not_in_this_build") == 0,
+		"once, through the sink, and an empty or unknown cue is silence"
+	)
+	_check(
+		sink.played_ids().size() == 1,
+		"and nothing else was played for them (%s)" % str(sink.played_ids())
+	)
+	p.queue_free()
+
+	# The countdown, where a player is already looking: under the round clock.
+	var hud := HungryHud.new()
+	hud.name = "VoteHud"
+	add_child(hud)
+	hud.build(null, null, 0)
+	hud.vote_countdown(4, false)
+	_check(
+		hud.vote_label != null and hud.vote_label.text == "Mode vote in 4…",
+		"a countdown second is drawn under the clock (%s)"
+			% (hud.vote_label.text if hud.vote_label != null else "no label")
+	)
+	hud.vote_countdown(2, true)
+	_check(
+		str(hud.describe()["vote"]) == "Runoff in 2…",
+		"in place, and a runoff says so (%s)" % str(hud.describe()["vote"])
+	)
+	_check(
+		hud.feed.line_count() == 0,
+		"and not in the feed, whose five lines the count would push the ballot out of"
+	)
+	hud.queue_free()
 	_done()

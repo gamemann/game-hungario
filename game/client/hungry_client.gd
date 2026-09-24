@@ -232,6 +232,7 @@ func _build_netcode() -> DotResult:
 	bridge.hunter_received.connect(_on_hunter)
 	bridge.hazard_received.connect(_on_hazard)
 	bridge.progress_received.connect(_on_progress)
+	bridge.vote_cue_received.connect(_on_vote_cue)
 
 	if link.has_method("ping_ms"):
 		bridge.rtt_source = func() -> float:
@@ -993,6 +994,18 @@ func _on_hazard(state: Dictionary) -> void:
 		)
 	else:
 		hazards.drop(int(state["place_id"]))
+
+
+## The mode vote's cue and countdown. The ballot itself arrives as chat in the feed; this
+## is what chat cannot carry.
+func _on_vote_cue(info: Dictionary) -> void:
+	var seconds_left := int(info.get("seconds_left", 0))
+
+	if seconds_left > 0 and hud != null:
+		hud.vote_countdown(seconds_left, bool(info.get("runoff", false)))
+
+	if presentation != null:
+		presentation.on_vote_cue(StringName(str(info.get("cue", ""))))
 
 
 ## Somebody earned something. Everybody is told, because an achievement nobody sees is a

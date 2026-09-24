@@ -2,6 +2,7 @@ extends Node
 
 const HungryContent := preload("../game/hungry_content.gd")
 const HungryHunters := preload("../game/hungry_hunters.gd")
+const HungryEvents := preload("../game/net/hungry_events.gd")
 const HungryInterest := preload("../game/net/hungry_interest.gd")
 const HungryModule := preload("../game/hungry_module.gd")
 const HungryMonster := preload("../game/hungry_monster.gd")
@@ -35,6 +36,8 @@ const SERVER_DIR := "user://hungry_dedicated"
 ## Unique and lowercase because the site already made it so. Display only — a listing
 ## prints it to say which game this is, and nothing treats it as proof.
 const APP_URL := "hungario"
+
+const CHECKS := 187
 
 var _passed := 0
 var _failed := 0
@@ -115,6 +118,17 @@ func _run() -> void:
 
 	for line in _failures:
 		print("  FAIL  %s" % line)
+
+	# The total the section counter cannot be. A runtime error inside a section aborts
+	# that function, and the counter is satisfied because the section had already
+	# announced itself. See docs/testing.md. This suite had only the counter until
+	# 2026-09-24.
+	if _passed + _failed != CHECKS:
+		print("ERROR: %d checks ran, %d expected. A section aborted part-way." % [
+			_passed + _failed, CHECKS
+		])
+		get_tree().quit(1)
+		return
 
 	get_tree().quit(1 if _failed > 0 else 0)
 
@@ -1385,11 +1399,34 @@ func _test_vote() -> void:
 			absent.append(name)
 	_check(absent.is_empty(), "dot-vote's commands are on the console", ", ".join(absent))
 
+	# The cues and the countdown leave the vote for the wire. The ids are the wire's own,
+	# and nothing on the server had any to send before.
+	var rules := maps.director.rules
+	var cues: Array = []
+	var on_cue := func(cue: StringName, seconds_left: int, _runoff: bool) -> void:
+		cues.append([String(cue), seconds_left])
+	maps.cue_due.connect(on_cue)
+	var min_players := rules.min_players_to_vote
+	rules.min_players_to_vote = 0
+	var started := maps.director.start_vote()
+	maps.cue_due.disconnect(on_cue)
+	_check(
+		started.ok and maps.director.is_counting_down()
+			and cues.has([HungryEvents.CUE_VOTE_WARNING, 0]) and cues.has(["", int(rules.vote_warning_sec)]),
+		"a ballot is counted down to, and its warning cue and first second go to the module (%s)"
+			% str(cues),
+		started.error.message if not started.ok else ""
+	)
+	maps.director.cancel_countdown()
+	rules.min_players_to_vote = min_players
+
 	# The leading score — the biggest monster's mass — reaches the director, and a score
 	# limit opens the ballot off it. Nothing called note_score before.
-	var rules := maps.director.rules
-	var saved := [rules.trigger, rules.duration_sec, rules.score_limit, rules.vote_lead_score, rules.min_players_to_vote]
+	var saved := [rules.trigger, rules.duration_sec, rules.score_limit, rules.vote_lead_score, rules.min_players_to_vote, rules.vote_warning_sec]
 	var top := int(maps.score_fn.call()) if maps.score_fn.is_valid() else 0
+	# No countdown for this one: it asks whether the score opens a ballot, and a countdown
+	# in front of the ballot is the check above.
+	rules.vote_warning_sec = 0.0
 	rules.trigger = DotVoteRules.Trigger.SCORE_LIMIT
 	rules.duration_sec = 0.0
 	rules.score_limit = top + 3
@@ -1424,8 +1461,31 @@ func _test_vote() -> void:
 	rules.score_limit = saved[2]
 	rules.vote_lead_score = saved[3]
 	rules.min_players_to_vote = saved[4]
+	rules.vote_warning_sec = saved[5]
+	maps.director.begin(maps.director.current_id())
+
+	# [b]The `map time` line follows an extend.[/b] It was a `DotMapTimeLimit` built beside
+	# the vote and advanced in step with it, which nothing extended: an operator reading
+	# `hungry_vote status` after the players voted to extend saw the old limit.
+	var before_line := _map_time_line(maps.describe_lines())
+	var extended := maps.director.extend()
+	var after_line := _map_time_line(maps.describe_lines())
+	_check(
+		extended.ok and after_line != before_line
+			and after_line.ends_with(maps.director.clock.formatted_remaining()),
+		"an extend moves the mode's time left where an operator reads it (%s -> %s)"
+			% [before_line.strip_edges(), after_line.strip_edges()],
+		"the descriptive clock would still say what it said before"
+	)
 	maps.director.begin(maps.director.current_id())
 	_done()
+
+
+func _map_time_line(lines: PackedStringArray) -> String:
+	for line in lines:
+		if line.begins_with("map time"):
+			return line
+	return ""
 
 
 func _test_transport() -> void:
