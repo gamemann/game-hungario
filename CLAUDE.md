@@ -693,8 +693,8 @@ done
 godot --headless --path . res://examples/headless_round.tscn   # 286 — the game
 godot --headless --path . res://examples/headless_stack.tscn   #  24 checks
 godot --headless --path . res://examples/headless_net.tscn     # 149 — the netcode
-godot --headless --path . res://examples/dedicated.tscn        # 195 — a real DotServer
-godot --headless --path . res://examples/sandbox.tscn          #  95 — two real clients
+godot --headless --path . res://examples/dedicated.tscn        # 200 — a real DotServer
+godot --headless --path . res://examples/sandbox.tscn          #  97 — two real clients
 godot --headless --path . res://examples/content.tscn          #  46 — the cloud path
 godot --headless --path . res://examples/headless_presentation.tscn  # 70 — the client half
 ```

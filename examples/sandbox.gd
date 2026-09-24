@@ -38,7 +38,7 @@ const SCOPE_KEY := "user://hungry_sandbox_scope.key"
 const SERVER_DIR := "user://hungry_sandbox_server"
 
 ## Every check this suite runs. See the guard at the end of [method _run].
-const CHECKS := 95
+const CHECKS := 97
 
 var _passed := 0
 var _failed := 0
@@ -356,10 +356,22 @@ func _build_server(server_side: Node) -> bool:
 	if not _check(platform.ok, "the platform module loads", str(platform.error)):
 		return false
 
+	# Into this run's own directory, which [method _cleanup] deletes on the way in and out.
+	# Before this line every run wrote the moderator's warnings into the real store.
+	HungryModule.punishments_path = "%s/punishments.json" % SERVER_DIR
+
 	var hungry: DotResult = await _server.modules.load_module(
 		"res://game/hungry_module.gd"
 	)
-	return _check(hungry.ok, "and so does the game", str(hungry.error))
+
+	if not _check(hungry.ok, "and so does the game", str(hungry.error)):
+		return false
+
+	var services := _module().services
+	_check(services.punishments_path.begins_with(SERVER_DIR),
+		"punishments go to this run's own store", services.punishments_path)
+	return _check(services.moderation.count() == 0,
+		"and it starts empty", "%d records" % services.moderation.count())
 
 
 func _teardown() -> void:

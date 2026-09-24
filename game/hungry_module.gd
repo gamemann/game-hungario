@@ -67,6 +67,17 @@ var loadouts: DotLoadoutManager = null
 ## these have to survive it, exactly as the netcode manager does.
 var services: HungryServices = null
 
+## Where the services write punishments. [constant HungryServices.PUNISHMENTS_PATH] — the
+## store a real server enforces — unless a host says otherwise before this loads.
+##
+## [b]Static, because nothing holds this module before it exists[/b]: dot-server constructs
+## it from a path inside `load_module`, so there is no instance for a host to set a field on
+## first. The suites point it at a directory of their own; before they could, every run of
+## `dedicated` and `sandbox` wrote a test gag and the live tools' warnings to the real
+## store, 417 records by the time anybody counted. game-simple-lobby's
+## `RoomModule.punishments_path` is the same seam.
+static var punishments_path: String = HungryServices.PUNISHMENTS_PATH
+
 ## dot-moderation's live tools with this game's verbs (`HungryModTools`), and their
 ## commands. Built here rather than in the services layer because the world they act on is
 ## replaced by a game change and this module is what knows the current one.
@@ -353,7 +364,7 @@ func _build_services() -> DotResult:
 	services.bridge = bridge
 	services.world = world
 	services.server = server
-	services.punishments_path = "user://hungry_punishments.json"
+	services.punishments_path = punishments_path
 	add_child(services)
 
 	var ready := services.setup()
