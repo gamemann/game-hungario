@@ -511,6 +511,25 @@ func _build_maps() -> DotResult:
 	maps.change_due.connect(_on_change_due)
 	maps.announced.connect(_on_vote_announced)
 
+	# The match a round ends in, and the leading score, for the vote. Callables, because a
+	# mode change replaces the world and the match with it.
+	maps.match_fn = func() -> DotMatch:
+		return world.match_node if world != null else null
+	maps.score_fn = func() -> int:
+		var best := 0.0
+
+		if world != null:
+			for id in world.player_ids():
+				var monster := world.monster_for(id)
+
+				if monster != null:
+					best = maxf(best, monster.mass())
+
+		return int(best)
+
+	var commanded := maps.install_commands(self)
+	DotLog.result(CHANNEL, "the vote's commands", commanded)
+
 	return DotResult.success(null)
 
 
@@ -1131,7 +1150,15 @@ func _on_vote_requested(peer_id: int, token: String) -> void:
 			if parts.size() > 1:
 				result = maps.director.cast_one(voter, StringName(parts[1]))
 		"extend":
-			result = maps.director.extend()
+			# An admin's, not a player's, as in game-playground: extending without a vote
+			# is what the ballot's own "extend" option exists to make a decision of the
+			# players. This line let anybody on the wire do it, as often as it allowed.
+			if not _voter_is_admin(voter):
+				result = DotResult.fail(
+					DotError.CODE_FORBIDDEN, "Only an admin can extend without a vote."
+				)
+			else:
+				result = maps.director.extend()
 
 	if result != null and not result.ok and services != null:
 		services.chat.notice(

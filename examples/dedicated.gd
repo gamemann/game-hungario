@@ -1367,6 +1367,64 @@ func _test_vote() -> void:
 		"the host announces it through `game_loaded`, which also fires for an operator "
 		+ "typing `changegame` — both firing halves every cooldown"
 	)
+
+	# Once a tick. It self-advanced AND the module advanced it, so a fifteen-minute mode
+	# was over in seven and a half.
+	_check(
+		not maps.director.self_advance and not maps.director.is_physics_processing(),
+		"the vote's clock is advanced once a tick, by the module, and not also by itself"
+	)
+
+	# dot-vote's commands. None existed: a chat `!rtv` reached a console with no `rtv`.
+	var absent := PackedStringArray()
+	for name in [
+		"rtv", "unrtv", "nominate", "vote", "timeleft", "nextmap",
+		"setnextmap", "nominate_addmap", "forcertv", "votereload",
+	]:
+		if _server.console.find_command(name) == null:
+			absent.append(name)
+	_check(absent.is_empty(), "dot-vote's commands are on the console", ", ".join(absent))
+
+	# The leading score — the biggest monster's mass — reaches the director, and a score
+	# limit opens the ballot off it. Nothing called note_score before.
+	var rules := maps.director.rules
+	var saved := [rules.trigger, rules.duration_sec, rules.score_limit, rules.vote_lead_score, rules.min_players_to_vote]
+	var top := int(maps.score_fn.call()) if maps.score_fn.is_valid() else 0
+	rules.trigger = DotVoteRules.Trigger.SCORE_LIMIT
+	rules.duration_sec = 0.0
+	rules.score_limit = top + 3
+	rules.vote_lead_score = 3
+	rules.min_players_to_vote = 0
+	maps.director.begin(maps.director.current_id())
+	maps.advance(0.0)
+
+	_check(
+		top > 0 and maps.director.clock.top_score == top,
+		"the biggest monster's mass is the vote's leading score (%d)" % top
+	)
+	_check(
+		maps.director.is_voting(),
+		"and a score limit %d short of it opens the ballot" % rules.vote_lead_score,
+		maps.director.describe_lines()[0]
+	)
+	if maps.director.is_voting():
+		maps.director.close_vote()
+
+	# And a round end reaches it, from the match the module is running.
+	var played := maps.director.clock.rounds_played
+	_module().world.match_node.round_ended.emit(99, 0, DotMatchRules.Outcome.SCORE)
+	_check(
+		maps.director.clock.rounds_played == played + 1,
+		"and dot-match's round end reaches the director (%d -> %d)"
+			% [played, maps.director.clock.rounds_played]
+	)
+
+	rules.trigger = saved[0]
+	rules.duration_sec = saved[1]
+	rules.score_limit = saved[2]
+	rules.vote_lead_score = saved[3]
+	rules.min_players_to_vote = saved[4]
+	maps.director.begin(maps.director.current_id())
 	_done()
 
 

@@ -511,6 +511,10 @@ leaving: `extend_needs_majority` (two documented policies, one behaviour),
 can never do anything), and `begin_on_apply` (both the director and the host announcing one
 play halves every cooldown).
 
+**Four joins that were missing, found finishing the map-chooser work (2026-09-23).** The director self-advanced *and* the module advanced it every tick, so every vote clock ran at double speed — a fifteen-minute mode ended in seven and a half while `limit`, advanced once, said otherwise. No command existed: a chat `!rtv` goes to the console here and the console had no `rtv`, so the client's wire was the only way to vote; `HungryMaps.install_commands` puts `DotVoteCommands` on the module, voters keyed as the bare player id the wire already uses. Nothing called `note_score` or `note_round_end`: the leading score is now the biggest monster's mass (what a round here is won on, so a vote `score_limit` is a mass), polled once a tick against the clock's own memory, and dot-match's `round_ended` reaches the director — which is what makes `apply: end_of_round` mean the end of a round rather than the clock. And the wire's `extend` let any player extend the mode as often as the rules allowed; it is an admin's now, as in game-playground. `dedicated` arms the score half: without the poll, two checks fire.
+
+**The vote's cues do not reach this game's client yet**, deliberately left: the sound bank is generated per id in `HungrySound`, and a cue needs a recipe there, a kind in `HungryEvents`, the bridge and the client — client files outside what that pass was scoped to. arena, g2gfast and playground carry it as a `VOTE` event and are the pattern to copy.
+
 ## Five modes, and the last three are shapes rather than dials
 
 `classic` and `frenzy` are the same square at two sizes: bigger and slower, smaller and
@@ -683,7 +687,7 @@ done
 godot --headless --path . res://examples/headless_round.tscn   # 286 — the game
 godot --headless --path . res://examples/headless_stack.tscn   #  24 checks
 godot --headless --path . res://examples/headless_net.tscn     # 135 — the netcode
-godot --headless --path . res://examples/dedicated.tscn        # 180 — a real DotServer
+godot --headless --path . res://examples/dedicated.tscn        # 185 — a real DotServer
 godot --headless --path . res://examples/sandbox.tscn          #  91 — two real clients
 godot --headless --path . res://examples/content.tscn          #  46 — the cloud path
 godot --headless --path . res://examples/headless_presentation.tscn  # 48 — the client half

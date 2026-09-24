@@ -79,6 +79,22 @@ var player_count_fn: Callable = Callable()
 ## Whether a voter is an admin.
 var is_admin_fn: Callable = Callable()
 
+## `func() -> DotMatch`. The match being played now, for its round ends. A callable because
+## a mode change builds a new world, and a new world a new match.
+var match_fn: Callable = Callable()
+
+## `func() -> int`. The leading score: the biggest monster's mass, which is what a round
+## here is won on. Reported to the director for `trigger: score_limit`.
+var score_fn: Callable = Callable()
+
+var commands: DotVoteCommands = null
+
+## What dot-vote's commands are called here. `vote` rather than `votefor`, so the command
+## is the token this game's own wire already sends.
+const COMMAND_NAMES := {"vote": "vote"}
+
+var _match: DotMatch = null
+
 ## The file [method setup] layers over the defaults. A test sets it empty.
 var config_path: String = CONFIG_PATH
 
@@ -251,7 +267,11 @@ func setup(p_games: Object) -> DotResult:
 	# the signal that has to be connected. Both firing is two entries in the play history
 	# for one play, and a "played in the last N" cooldown that is quietly half what it says.
 	director.begin_on_apply = false
-	director.self_advance = true
+	# [b]Off: the module advances it, once per world tick.[/b] It was on, AND the module
+	# called `advance` every tick, so every clock in the vote counted twice — a fifteen-
+	# minute mode was over in seven and a half, and `limit` below, advanced once, said
+	# otherwise the whole time.
+	director.self_advance = false
 	director.register_service = false
 	director.player_count_fn = _player_count
 	director.is_admin_fn = _is_admin
@@ -295,13 +315,90 @@ func note_playing(game_id: StringName) -> void:
 	if limit != null:
 		limit.start()
 
+	_bind_match()
+
 
 func advance(delta: float) -> void:
 	if director != null:
 		director.advance(delta)
+		_report_score()
 
 	if limit != null:
 		limit.advance(delta)
+
+
+## The leading score, once a tick and only when it moved.
+##
+## [b]Mass, not kills[/b], because mass is what a round here is won on — HungryRules
+## replaces dot-match's kill limit with it — so a vote `score_limit` is a mass: the ballot
+## opens when the biggest monster is `vote_lead_score` short of it. It was reported by
+## nothing, so `trigger: score_limit` validated here and decided nothing.
+func _report_score() -> void:
+	if not score_fn.is_valid():
+		return
+
+	var top := int(score_fn.call())
+
+	# Against the clock's own memory rather than a copy here: the clock zeroes it on every
+	# restart — a new map, an extend, a ballot that kept the map — and a cached copy would
+	# then hold back a score that had not moved but that the clock had forgotten.
+	if top == director.clock.top_score:
+		return
+
+	director.note_score(top)
+
+
+## Follows the match a round ends in. Rebound on every mode change, because a new mode is
+## a new world with a new match, and a connection to the freed one would never fire.
+func _bind_match() -> void:
+	var node: DotMatch = match_fn.call() if match_fn.is_valid() else null
+
+	if node == _match:
+		return
+
+	if (
+		_match != null and is_instance_valid(_match)
+		and _match.round_ended.is_connected(_on_round_ended)
+	):
+		_match.round_ended.disconnect(_on_round_ended)
+
+	_match = node
+
+	if _match != null:
+		_match.round_ended.connect(_on_round_ended)
+
+
+## A round ended. This game's rules apply a vote's winner at the end of a round, and until
+## this was connected nothing told the director one had — so the winner waited for the
+## clock, and a round-limit or round-end trigger could never fire at all.
+func _on_round_ended(_round: int, _winner: int, _outcome: DotMatchRules.Outcome) -> void:
+	if director != null:
+		director.note_round_end()
+
+
+## dot-vote's commands, on [param host] — the module, so they go when it does.
+##
+## [b]None existed here.[/b] A chat `!rtv` is routed to the console in this game, and the
+## console had no `rtv`, so it was dropped as an unknown command; the only way to vote was
+## the client's own wire. Voters are the bare player id — `str(userid)` — which is what the
+## wire's votes use and what a disconnect forgets; dot-vote's default is `u<userid>`, and
+## two spellings of one voter is a player who rocks the vote twice.
+func install_commands(host: Object) -> DotResult:
+	if director == null:
+		return DotResult.fail(DotError.CODE_STATE, "There is no vote to command.")
+
+	commands = DotVoteCommands.new()
+	commands.director = director
+	commands.names = COMMAND_NAMES
+	commands.voter_fn = func(ctx: Object) -> StringName:
+		var session: Variant = ctx.get("session")
+
+		if session is Object and (session as Object).get("userid") != null:
+			return StringName(str((session as Object).get("userid")))
+
+		return &"console"
+
+	return commands.bind(host)
 
 
 ## What would play next with nobody voting.
