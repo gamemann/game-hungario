@@ -37,7 +37,7 @@ const SERVER_DIR := "user://hungry_dedicated"
 ## prints it to say which game this is, and nothing treats it as proof.
 const APP_URL := "hungario"
 
-const CHECKS := 200
+const CHECKS := 202
 
 var _passed := 0
 var _failed := 0
@@ -980,6 +980,27 @@ func _test_live_tools() -> void:
 	var world := _world()
 	var monster := world.monster_for(313)
 	_check(monster != null, "a player joins as a monster")
+
+	# Who the vote treats as an admin, which gates the wire's `extend`: CHANGEMAP, not
+	# `is_admin()` — "holds any flag at all" — under which a reserved slot extended the mode.
+	var hungry: Object = _module()
+	session.permissions = PackedStringArray(["reservation", "chat"])
+	var slot_only: bool = hungry.call("_voter_is_admin", &"313")
+	session.permissions = PackedStringArray(["changemap"])
+	var changer: bool = hungry.call("_voter_is_admin", &"313")
+	session.permissions = PackedStringArray()
+	_check(not slot_only and changer,
+		"a reserved slot is not a vote admin, and changemap is",
+		"slot %s, changemap %s" % [slot_only, changer])
+
+	# A peer with nobody in the world yet votes as nobody. They all answered as player 0,
+	# so every such peer rocked, nominated and voted as one voter.
+	var director: DotVoteDirector = hungry.get("maps").director if hungry.get("maps") != null else null
+	var rocks_before := director.clock.rtv_votes() if director != null else -1
+	hungry.call("_on_vote_requested", 987654, "rtv")
+	_check(director != null and director.clock.rtv_votes() == rocks_before
+			and not director.clock.has_rocked(&"0"),
+		"a peer with nobody in the world yet cannot rock the vote as player 0")
 
 	if monster == null:
 		for what in ["slay", "respawn", "give", "noclip", "freeze", "speed", "clean", "refusal", "rename",

@@ -1155,7 +1155,14 @@ func _on_vote_requested(peer_id: int, token: String) -> void:
 	if maps == null or maps.director == null:
 		return
 
-	var voter := StringName(str(bridge.player_for_peer(peer_id)))
+	var player_id := bridge.player_for_peer(peer_id)
+
+	# Nobody in the world yet. `player_for_peer` answers 0 for every such peer, so they
+	# would all rock, nominate and vote as the one voter "0" — each undoing the last.
+	if player_id <= 0:
+		return
+
+	var voter := StringName(str(player_id))
 	var parts := token.strip_edges().split(" ", false)
 
 	if parts.is_empty():
@@ -1193,7 +1200,10 @@ func _voter_is_admin(voter: StringName) -> bool:
 	var player_id := String(voter).to_int()
 	var peer_id := bridge.peer_for_player(player_id)
 	var session := server.session_of(peer_id) if peer_id > 0 else null
-	return session != null and session.is_admin()
+	# CHANGEMAP, not any flag: `is_admin()` is "holds a flag at all", which a reserved slot
+	# or admin chat satisfies, and this gates extending the map, an instant rtv and the
+	# nomination bypasses. The console's own extend asks for CHANGEMAP; the wire must too.
+	return session != null and session.has_permission(DotAdminFlags.CHANGEMAP)
 
 
 func _on_vote_announced(line: String) -> void:
