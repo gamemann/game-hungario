@@ -74,7 +74,9 @@ func host(display_name: String) -> DotResult:
 			"this build cannot host a private arena",
 			DotP2PSession.unavailable_reason()
 		)
-	var res := session.host(display_name)
+	# Awaited: dot-peer-to-peer's session awaits its signaller since 37d47c1, because an
+	# HTTP rendezvous answers a frame later at best. A caller of this awaits it too.
+	var res: DotResult = await session.host(display_name)
 	if res.ok:
 		open.emit(str(res.value))
 		DotLog.info(
@@ -86,7 +88,7 @@ func host(display_name: String) -> DotResult:
 
 
 func join(code: String, display_name: String) -> DotResult:
-	return session.join(code, display_name)
+	return await session.join(code, display_name)
 
 
 func leave() -> void:
