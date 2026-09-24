@@ -125,15 +125,21 @@ func _boot() -> void:
 
 	_world.start(0)
 
-	# Live, then a player in it. A world that has not reached LIVE throws the arrangement
-	# away at the transition — the same trap every test in this project learned.
+	# A player in it, THEN live, then put where the frame wants them. A world that has not
+	# reached LIVE throws the arrangement away at the transition — and dot-match stays in
+	# warmup until somebody has joined, so the loop that used to run first, with nobody in
+	# the world, ran out its five seconds still in warmup; the tick after the player was
+	# added was the reset, and it respawned them at a safe spawn. Every `--at` and every
+	# default player's-view frame until 2026-09-24 was wherever that spawn liked (found
+	# framing the warrens' den: `--at=640,0` and the default came out identical).
+	_world.add_player(1, "Screenshot")
+
 	for _i in range(_world.tick_rate * 5):
 		if _world.match_node.is_live():
 			break
 
 		_world.tick({})
 
-	_world.add_player(1, "Screenshot")
 	_world.spawn(1, at if at != Vector2.INF
 		else Vector2(0.0, _world.arena.bounds.size.y * 0.36))
 	_world.tick({})
