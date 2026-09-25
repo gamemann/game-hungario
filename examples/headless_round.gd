@@ -7,6 +7,7 @@ const HungryContentSource := preload("../game/client/hungry_content_source.gd")
 const HungryEvents := preload("../game/net/hungry_events.gd")
 const HungryField := preload("../game/hungry_field.gd")
 const HungryHud := preload("../game/client/hungry_hud.gd")
+const HungryHunters := preload("../game/hungry_hunters.gd")
 const HungryInput := preload("../game/client/hungry_input.gd")
 const HungryMenus := preload("../game/client/hungry_menus.gd")
 const HungryMonster := preload("../game/hungry_monster.gd")
@@ -37,7 +38,7 @@ const HungryWorld := preload("../game/hungry_world.gd")
 const SEED := 20260828
 const TICK_RATE := 60
 
-const CHECKS := 331
+const CHECKS := 337
 
 var _passed := 0
 var _failed := 0
@@ -94,6 +95,7 @@ func _run() -> void:
 	_test_the_lagoon()
 	_test_the_den()
 	_test_the_harbours()
+	_test_hunter_round_a_rock()
 	_test_the_reach()
 	_test_food_on_the_floor()
 	_test_spectating()
@@ -2827,6 +2829,119 @@ func _test_the_harbours() -> void:
 
 	_drop(world)
 	_done()
+
+
+## [warren-nav-1]: a hunter whose target stands behind a rock goes round it.
+##
+## [b]Until 2026-09-25 it did not.[/b] dot-npc steers straight at a goal, every world here
+## was an empty box when the hunters were written, and `_keep_out_of_the_level` only
+## pushed a hunter OUT of a rock — so one with its target on the far side of a ring rock
+## walked at the middle of the rock and stayed against its face for as long as the target
+## did. `HungryHunters.nav_for` builds dot-npc navigation from the layout and the chase
+## steers along it. The arrangement is the worst case for the old behaviour: hunter, rock
+## centre and target on one line, so the push-out has no tangent to slide on.
+func _test_hunter_round_a_rock() -> void:
+	_section("a hunter goes round a rock")
+
+	var world := _make_world(HungryPreset.warrens(), SEED + 227)
+	world.add_player(1, "Ada")
+	_settle(world)
+
+	var hunters := HungryHunters.new()
+	hunters.name = "Hunters"
+	add_child(hunters)
+	var ready := hunters.setup(true, world)
+
+	if not _check(ready.ok, "a hunter layer stands over the warrens", str(ready)):
+		_drop_hunters(hunters)
+		_drop(world)
+		_done()
+		return
+
+	var bounds := world.arena.bounds
+	var centre := bounds.get_center()
+	var rock: Vector3 = world.layout.blocks[0]
+	var rock_at := Vector2(rock.x, rock.y)
+	var out := (rock_at - centre).normalized()
+	var ring_at := rock_at.distance_to(centre)
+	var prey_at := centre + out * (ring_at - rock.z - 120.0)
+	var hunter_at := centre + out * (ring_at + rock.z + 170.0)
+
+	world.spawn(1, prey_at)
+	_run_ticks(world, 2)
+
+	var prey := world.monster_for(1)
+	hunters.tick(1.0 / float(TICK_RATE))
+
+	var nav := hunters.spawner.nav
+	_check(
+		hunters.spawner.has_nav() and nav.data.point_count() > 0 and nav.data.edge_count() > 0,
+		"the spawner has navigation built from the layout",
+		"%s" % (str(nav.data.describe()) if nav != null else "none")
+	)
+	_check(
+		nav != null and nav.is_reachable(
+			DotNpcInstance.to_plane(hunter_at), DotNpcInstance.to_plane(prey_at), 100.0
+		) and not nav.can_walk_straight(
+			DotNpcInstance.to_plane(hunter_at), DotNpcInstance.to_plane(prey_at)
+		),
+		"and it has a way from outside the ring rock to behind it, and not a straight one"
+	)
+
+	var npc := hunters.spawner.spawn_2d(&"stalker", hunter_at)
+
+	if not _check(
+		npc != null and prey != null and prey.alive,
+		"a stalker stands outside a ring rock with a starting monster behind it"
+	):
+		_drop_hunters(hunters)
+		_drop(world)
+		_done()
+		return
+
+	var body := npc.node as Node2D
+	var reach := HungryHunters.radius_of(&"stalker")
+	var deepest := INF
+	var ticks := 0
+
+	# [b]Six seconds, and the budget is the check.[/b] Measured 2026-09-25 with the prey
+	# standing still: along the path the stalker eats it in 252 ticks (4.2 s, about 1000
+	# units at 240 a second). With the navigation taken away it still gets there — a
+	# disc is convex, and pressed dead-centre on one the push-out eventually slips to a
+	# side — but in 624 ticks, six of those seconds spent against the rock's face, which
+	# is [warren-nav-1] exactly and what a player standing behind a rock sees. A budget
+	# of twenty seconds passed both.
+	for _i in range(TICK_RATE * 6):
+		if not prey.alive:
+			break
+
+		hunters.tick(1.0 / float(TICK_RATE))
+		ticks += 1
+
+		if npc.is_alive():
+			deepest = minf(deepest, body.global_position.distance_to(rock_at) - rock.z - reach)
+
+	_check(
+		not prey.alive,
+		"it goes round the rock and eats the monster behind it inside six seconds",
+		"%d ticks; the hunter at %s, the prey at %s"
+			% [ticks, str(body.global_position) if npc.is_alive() else "-", str(prey_at)]
+	)
+	_check(
+		deepest > -2.0,
+		"and is never inside the rock on the way",
+		"deepest %.1f into its face" % deepest
+	)
+
+	_drop_hunters(hunters)
+	_drop(world)
+	_done()
+
+
+func _drop_hunters(hunters: Node) -> void:
+	if hunters != null and is_instance_valid(hunters):
+		remove_child(hunters)
+		hunters.free()
 
 
 ## [reach-1]: every level, swept. Every gap passes what it is meant to pass, and nothing on

@@ -4,6 +4,7 @@ const HungryPaths := preload("hungry_paths.gd")
 
 const HungryMonster := preload("hungry_monster.gd")
 const HungryWorld := preload("hungry_world.gd")
+const HungryLayout := preload("hungry_layout.gd")
 
 ## NPC monsters that roam the arena, eat what they can and run from what they cannot.
 ##
@@ -103,6 +104,12 @@ var _instance_of_wire: Dictionary = {}
 var _next_wire_id: int = 1
 
 var _tick: int = 0
+
+## The layout the spawner's navigation was built from, so a game change — a new world
+## with a new layout — is noticed on the next tick rather than by a hook somebody has to
+## remember to call. Identity, not equality: the world builds its layout once.
+var _nav_layout: HungryLayout = null
+var _nav_built: bool = false
 var _static_catalogue: DotNpcCatalogue = null
 
 
@@ -231,6 +238,12 @@ func setup(p_authoritative: bool, p_world: HungryWorld) -> DotResult:
 	# Longer than the addon's default, because being chased across an arena is the
 	# experience and a hunter reclaimed after six seconds of it is a hunter that gives up.
 	limits.reclaim_grace = 25.0
+	# [b]The path's snap, in world units[/b]: dot-npc snaps a path's ends to the nearest
+	# navigation point within this, and its default of 4 is metres. A hunter or a target
+	# is never more than a grid step and a bit from a point of [method nav_for]'s grid, and
+	# a snap that found none would be a path that is never found — a hunter walking
+	# straight again with nothing saying why.
+	limits.spawn_snap_radius = 100.0
 
 	var problem := limits.validate()
 
@@ -245,6 +258,14 @@ func setup(p_authoritative: bool, p_world: HungryWorld) -> DotResult:
 	# One flag says this spawner serves a 2D world; `spawn_group` and the director both
 	# read it, so neither needs a 2D twin.
 	spawner.two_dimensional = true
+	# A target moves every tick, and dot-npc's default drift is 2.5 metres — here, 2.5
+	# units, which is a repath every tick for every hunter. Three grid steps, and at most
+	# once a second otherwise: a search across the whole of a map costs 15-40 ms in
+	# GDScript (measured 2026-09-25: warrens 15, reef 23, gauntlet 42 end to end; a chase
+	# inside a hunter's sight is much shorter), and a path's last leg is the goal itself,
+	# so a target that has moved a little is still steered at where it is.
+	spawner.repath_drift = NAV_SPACING * 3.0
+	spawner.repath_interval = 1.0
 	add_child(spawner)
 
 	spawner.spawned.connect(_on_spawned)
@@ -366,6 +387,7 @@ func tick(delta: float) -> void:
 		return
 
 	_tick += 1
+	_keep_nav_current()
 
 	# [b]The candidate list is built once per tick, before the hunters run.[/b] Once per
 	# tick and not once per hunter, because thirty hunters each building their own list of
@@ -391,16 +413,123 @@ func tick(delta: float) -> void:
 		_broadcast_all()
 
 
+# --- Navigation, from the layout -----------------------------------------------
+
+## The navigation grid's step, in world units.
+##
+## [b]Sized by the narrowest gate a hunter should find[/b], not by the arena: the den's
+## gates are 202 and a point has to stand in one with [constant NAV_CLEARANCE] either side
+## of it, which a step of 64 always gives and a step of 128 does not. Finer is paid for in
+## every search — dot-npc's nearest-point lookup is a scan — and warrens is 4200 across.
+const NAV_SPACING := 64.0
+
+## How far off a rock a navigation point stands.
+##
+## [b]The smallest hunter's clearance, deliberately, rather than each hunter's own.[/b]
+## A grid per hunter kind would be three graphs for one map. A bigger hunter following
+## a path laid for a small one is steered along a rock's face and slides along it on
+## [method _keep_out_of_the_level]'s push-out, which is the behaviour a player expects;
+## one routed through a gate it cannot fit is held at the gate, which is the level
+## working. What the path fixes is the hunter that walked at the middle of a rock with its
+## target behind it and stayed there.
+const NAV_CLEARANCE := 40.0
+
+
+## Navigation for [param layout] inside [param bounds], or null for an empty one.
+##
+## [b]Built from the same discs the world pushes a hunter out of[/b], so the graph and
+## the push-out cannot disagree about where a rock is: a grid on dot-npc's XZ plane, a
+## point wherever [constant NAV_CLEARANCE] fits, and an edge to each of the eight
+## neighbours whose straight line keeps that clearance. An empty box gets null, which is
+## dot-npc's "walk straight at the goal" — the right answer where nothing is in the way.
+static func nav_for(layout: HungryLayout, bounds: Rect2) -> DotNpcNavData:
+	if layout == null or layout.is_empty():
+		return null
+
+	var data := DotNpcNavData.new()
+	data.map_id = StringName("hungry_%s" % String(layout.id))
+	data.grid_spacing = NAV_SPACING
+	data.point_radius = NAV_SPACING
+	data.source_digest = DotNpcNavData.digest_of([
+		String(layout.id), bounds.position, bounds.size, NAV_SPACING, NAV_CLEARANCE,
+		layout.blocks,
+	])
+
+	var inner := bounds.grow(-NAV_CLEARANCE)
+	var columns := int(floor(inner.size.x / NAV_SPACING)) + 1
+	var rows := int(floor(inner.size.y / NAV_SPACING)) + 1
+	var index_at := PackedInt32Array()
+	index_at.resize(columns * rows)
+	index_at.fill(-1)
+
+	for row in range(rows):
+		for column in range(columns):
+			var at := inner.position + Vector2(column, row) * NAV_SPACING
+
+			if not layout.blocked(at, NAV_CLEARANCE):
+				index_at[row * columns + column] = data.add_point(DotNpcInstance.to_plane(at))
+
+	# Four of the eight directions from each point, so each edge is added once; the graph
+	# makes every edge two-way.
+	var steps := [Vector2i(1, 0), Vector2i(0, 1), Vector2i(1, 1), Vector2i(-1, 1)]
+
+	for row in range(rows):
+		for column in range(columns):
+			var here := index_at[row * columns + column]
+
+			if here < 0:
+				continue
+
+			for step in steps:
+				var c: int = column + step.x
+				var r: int = row + step.y
+
+				if c < 0 or c >= columns or r >= rows:
+					continue
+
+				var there := index_at[r * columns + c]
+
+				if there < 0:
+					continue
+
+				if layout._clear_line(
+					DotNpcInstance.from_plane(data.points[here]),
+					DotNpcInstance.from_plane(data.points[there]),
+					NAV_CLEARANCE, NAV_SPACING * 0.5
+				):
+					data.connect_points(here, there)
+
+	return data
+
+
+## Hands the spawner navigation for whatever layout the world has now.
+##
+## Every tick, and it costs a comparison: the world is replaced on a game change and the
+## hunters are re-pointed at it by the module, and a graph held across that is a graph of
+## the level nobody is in — dot-npc's own warning, and the one failure worse than none.
+func _keep_nav_current() -> void:
+	if spawner == null or world == null:
+		return
+
+	var layout := world.layout
+
+	if _nav_built and layout == _nav_layout:
+		return
+
+	_nav_layout = layout
+	_nav_built = true
+	var bounds := world.arena.bounds if world.arena != null else Rect2()
+	spawner.set_nav_data(nav_for(layout, bounds))
+
+
 ## Pushes every hunter out of the level's own geometry.
 ##
-## [b]A push-out rather than a path around, and that is a limitation worth naming.[/b]
-## dot-npc's steering knows about its navigation data and this game builds none — every
-## world here was an empty box until Warrens, so a hunter that steered straight at its
-## target was a hunter that was right. With geometry in the way it is no longer right, and
-## the honest fix is navigation data generated from the layout the way dot-timer generates
-## its zones. What this does instead is stop a hunter being INSIDE a rock, which is the
-## part a player can see; what it does not do is stop one pressing against the far side of
-## one while its target stands behind it.
+## [b]The half of navigation a path does not do.[/b] Until 2026-09-25 this was all there
+## was: hunters steered straight at a target and pressed against the far side of any rock
+## between them ([warren-nav-1]). They follow a path now — [method nav_for] builds dot-npc
+## navigation from the layout and the chase steers along it — but a path is laid at
+## [constant NAV_CLEARANCE] for the smallest hunter, and steering overshoots on a turn, so
+## this still stops a hunter being INSIDE a rock, which is the part a player can see.
 ##
 ## Server side only. A hunter's position is broadcast rather than derived, so a client that
 ## mirrors one is mirroring a position that has already been pushed out.

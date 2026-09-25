@@ -592,7 +592,7 @@ Three things a layout makes true that an empty box never did, all of which are i
 - **The field is culled against it.** A crumb inside a rock cannot be eaten and never expires, so it holds its slot against the field's budget for ever and the mode quietly runs at seven eighths of the food it claims. `_cull_blocked` takes them back on the tick they are placed, which costs nothing on the wire because the field's delta already cancels an id added and taken between two snapshots.
 - **A spawn is moved rather than refused.** Every producer of a spawn point here knows about monsters and nothing about rocks, and a rock covers an eighth of a warren.
 
-**The hunters get a push-out and not a path, and that is a named limitation.** dot-npc steers straight at its target because every world here was an empty box; with geometry in the way the honest fix is navigation data generated from the layout the way dot-timer generates its zones. `_keep_out_of_the_level` stops a hunter being *inside* a rock, which is the part a player can see. It does not stop one pressing against the far side of one.
+**The hunters get a path now, and they had not been chasing at all (`[warren-nav-1]`, 2026-09-25).** dot-npc steered straight at a target because every world here was an empty box, and `_keep_out_of_the_level` only pushed a hunter out of a rock. `HungryHunters.nav_for(layout, bounds)` builds dot-npc navigation from the layout — a 64-unit grid on the XZ plane, a point wherever 40 units of clearance fits (the smallest hunter's, one graph for all three kinds), an edge to each of eight neighbours whose line keeps it — and `_keep_nav_current` hands it to the spawner on the first tick of every layout, so a game change is noticed without a hook; an empty box gets null, which is dot-npc's straight line. The chase already called `steer_with_spacing`, which asks the spawner's `path_toward`, so nothing in the brain changed for that. The snap radius and the repath drift are set in world units (dot-npc's defaults are metres: a 4-unit snap never finds a point and a 2.5-unit drift repaths every tick). A search across a whole map costs 15-40 ms in GDScript; a chase inside sight is shorter, and a hunter repaths at most once a second or when its target has moved three grid steps. **Writing the check found the bigger bug: no hunter had ever chased anybody.** `HungryHunterBrain` read its link to `HungryHunters` from `npc.meta` in `_build`, and dot-npc builds the brain inside the spawn and emits `spawned` — where the link is put in `meta` — after it, so every hunter held a null, could not weigh anybody as prey or predator, and wandered for its whole life. `dedicated` counted hunters and never watched one hunt. The brain reads the link on first use now (`_link`). `headless_round`'s **a hunter goes round a rock** puts a stalker outside a warrens ring rock with a starting monster behind it, hunter, rock centre and prey on one line: along the path it eats it in 252 ticks; with the navigation taken away it still gets there — a disc is convex, and pressed dead-centre the push-out eventually slips — but in 624, six seconds against the rock's face, so the check's budget is six seconds. Armed both ways: no navigation fired 3 checks, the old `_build`-time link fired 1. The push-out stays, for the overshoot on a turn and for the bigger hunters a 40-clearance path leads along a face; a lurker (480 across) is routed through gates it cannot fit and is held at them, which is the level working.
 
 ## Game switching: the world is the scene, the manager is not
 
@@ -700,7 +700,7 @@ find . -name '*.gd' -not -path './.godot/*' -not -path './addons/*' | while read
     godot --headless --path . --check-only --script "res://${f#./}"
 done
 
-godot --headless --path . res://examples/headless_round.tscn   # 331 — the game
+godot --headless --path . res://examples/headless_round.tscn   # 337 — the game
 godot --headless --path . res://examples/headless_stack.tscn   #  24 checks
 godot --headless --path . res://examples/headless_net.tscn     # 158 — the netcode
 godot --headless --path . res://examples/dedicated.tscn        # 202 — a real DotServer
@@ -709,7 +709,7 @@ godot --headless --path . res://examples/content.tscn          #  46 — the clo
 godot --headless --path . res://examples/headless_presentation.tscn  # 70 — the client half
 ```
 
-930 checks across seven suites. Every one of them has a section counter and a CHECKS total; `sandbox` and `content` were the last two with only the counter, and got theirs on 2026-09-24 (each armed: CHECKS raised by one, exit 1). Add `-- --verbose` to `dedicated`, `sandbox` or `content` when one fails and
+936 checks across seven suites. Every one of them has a section counter and a CHECKS total; `sandbox` and `content` were the last two with only the counter, and got theirs on 2026-09-24 (each armed: CHECKS raised by one, exit 1). Add `-- --verbose` to `dedicated`, `sandbox` or `content` when one fails and
 the reason is in a log line rather than in the assertion.
 
 **Run `headless_round` after any change to dot-2d** and **`headless_net` after any change
