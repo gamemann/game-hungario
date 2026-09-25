@@ -130,22 +130,6 @@ func build() -> void:
 		_players.append(player)
 
 
-## Every voice stopped and emptied on the way out.
-##
-## [b]Without this a bank freed while a blip is still sounding leaks at exit[/b], and it is
-## the only thing that did: `headless_presentation` printed "8 ObjectDB instances were
-## leaked" on every green run ([hungario-pres-leak], measured 2026-09-25 with `--verbose`),
-## and the eight were five `AudioStreamPlaybackWAV` and the three `AudioStreamWAV`s they played — the
-## playbacks of voices whose player was freed mid-sound, still held by the audio server
-## when the process quit. Stopping each voice here hands its playback back first. It
-## cannot be asserted from inside the suite (the engine prints the leak after `quit()`),
-## so the evidence is the run: the same suite, the same seed, and no warning.
-func _exit_tree() -> void:
-	for player in _players:
-		player.stop()
-		player.stream = null
-
-
 ## Builds one voice.
 ##
 ## A sine sweep from [param from_hz] to [param to_hz] over [param seconds], with
@@ -222,7 +206,18 @@ func play(cue: Cue, pitch: float = 1.0) -> void:
 	player.stream = stream
 	player.pitch_scale = clampf(pitch, 0.4, 2.4)
 	player.volume_db = volume_db
-	player.play()
+
+	# [b]Not started when nothing will ever mix it.[/b] Under the dummy audio driver —
+	# every headless run — a started voice's playback is registered with the audio
+	# server and never retired, and the process exits holding it: `headless_presentation`
+	# printed "8 ObjectDB instances were leaked" on nearly every green run, and `--verbose`
+	# named five `AudioStreamPlaybackWAV` and the three `AudioStreamWAV`s they played
+	# ([hungario-pres-leak], 2026-09-25). Taking `play()` out removed all eight; stopping
+	# and emptying every voice on the way out, and waiting 0.3 s before quitting, removed
+	# none. Nobody hears the dummy driver, so a voice it would have played costs nothing
+	# to skip, and the voice is still chosen and loaded so the round-robin is the same.
+	if AudioServer.get_driver_name() != "Dummy":
+		player.play()
 
 
 ## The pitch a piece of food of this size should sound at.
