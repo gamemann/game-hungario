@@ -130,6 +130,22 @@ func build() -> void:
 		_players.append(player)
 
 
+## Every voice stopped and emptied on the way out.
+##
+## [b]Without this a bank freed while a blip is still sounding leaks at exit[/b], and it is
+## the only thing that did: `headless_presentation` printed "8 ObjectDB instances were
+## leaked" on every green run ([hungario-pres-leak], measured 2026-09-25 with `--verbose`),
+## and the eight were five `AudioStreamPlaybackWAV` and the three `AudioStreamWAV`s they played — the
+## playbacks of voices whose player was freed mid-sound, still held by the audio server
+## when the process quit. Stopping each voice here hands its playback back first. It
+## cannot be asserted from inside the suite (the engine prints the leak after `quit()`),
+## so the evidence is the run: the same suite, the same seed, and no warning.
+func _exit_tree() -> void:
+	for player in _players:
+		player.stop()
+		player.stream = null
+
+
 ## Builds one voice.
 ##
 ## A sine sweep from [param from_hz] to [param to_hz] over [param seconds], with
