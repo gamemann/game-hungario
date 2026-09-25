@@ -36,7 +36,8 @@ var speed: float = 160.0
 ## Where it is heading when it has nobody. An angle, wandered rather than re-rolled.
 var _wander_angle: float = 0.0
 
-## The world, so a hunter can ask what is near it. Set by [HungryHunters] through `meta`.
+## The world, so a hunter can ask what is near it. Set by [HungryHunters] through `meta`,
+## and read through [method _link] rather than in [method _build].
 var _hunters: Object = null
 
 
@@ -44,8 +45,6 @@ func _build() -> void:
 	if npc != null and npc.def != null:
 		mass = float(npc.def.meta.get("mass", mass))
 		speed = float(npc.def.meta.get("speed", speed))
-
-	_hunters = npc.meta.get("hunters") if npc != null else null
 
 	# Deterministic from the instance rather than `randf()`: two servers replaying the
 	# same director decisions place and steer a wave identically, which is what makes a
@@ -96,8 +95,8 @@ func _wander(ctx: DotNpcAiContext) -> void:
 	# Turned back at the wall rather than clamped there. A hunter pressed against an edge
 	# with a heading into it is a hunter that never leaves the edge, and the arena's
 	# corners would collect every hunter on the server.
-	if _hunters != null and _hunters.has_method(&"is_near_edge"):
-		if bool(_hunters.call(&"is_near_edge", DotNpcInstance.from_plane(here))):
+	if _link() != null and _link().has_method(&"is_near_edge"):
+		if bool(_link().call(&"is_near_edge", DotNpcInstance.from_plane(here))):
 			heading = DotNpcAiSteering.seek(here, Vector3.ZERO)
 			_wander_angle = atan2(heading.z, heading.x)
 
@@ -158,18 +157,18 @@ func _sees_predator(_ctx: DotNpcAiContext) -> bool:
 
 
 func _target_position() -> Vector3:
-	if _hunters == null or not _hunters.has_method(&"position_of"):
+	if _link() == null or not _link().has_method(&"position_of"):
 		return Vector3.INF
 
-	return _hunters.call(&"position_of", npc.target_id)
+	return _link().call(&"position_of", npc.target_id)
 
 
 ## The world's ratio, asked for rather than kept.
 func _eat_ratio() -> float:
-	if _hunters == null or not _hunters.has_method(&"eat_ratio"):
+	if _link() == null or not _link().has_method(&"eat_ratio"):
 		return 1.25
 
-	return float(_hunters.call(&"eat_ratio"))
+	return float(_link().call(&"eat_ratio"))
 
 
 func _target_mass() -> float:
@@ -177,7 +176,24 @@ func _target_mass() -> float:
 	# of hunter weighs; this asks what the thing it is looking at weighs. Two questions
 	# one letter apart is exactly the sort of collision a duck-typed call cannot catch,
 	# so the names are different rather than overloaded.
-	if _hunters == null or not _hunters.has_method(&"mass_of_candidate"):
+	if _link() == null or not _link().has_method(&"mass_of_candidate"):
 		return 0.0
 
-	return float(_hunters.call(&"mass_of_candidate", npc.target_id))
+	return float(_link().call(&"mass_of_candidate", npc.target_id))
+
+
+## [HungryHunters], read on first use rather than in [method _build].
+##
+## [b]It was read in `_build`, and `_build` runs before it is there.[/b] dot-npc attaches
+## the brain inside the spawn and emits `spawned` after it, and `spawned` is where
+## [HungryHunters] puts itself in the NPC's `meta` — so every hunter ever spawned held a
+## null here, never saw anybody as prey or predator (both need a mass, and the mass came
+## through this), and wandered for its whole life. Nothing errored: every call site
+## already treated a missing link as "nobody to chase". Found 2026-09-25 by the first
+## check that ever asked a hunter to catch somebody (`headless_round`'s "a hunter goes
+## round a rock"); `dedicated` counted hunters and never watched one hunt.
+func _link() -> Object:
+	if _hunters == null and npc != null:
+		_hunters = npc.meta.get("hunters")
+
+	return _hunters
