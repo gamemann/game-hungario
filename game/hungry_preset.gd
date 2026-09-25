@@ -97,6 +97,11 @@ static func frenzy() -> HungryPreset:
 ## wall and the other, so every one of them has a narrow lane and a wide one and a monster
 ## that has grown can only use the wide one. The shortcut changes sides at every rock, so
 ## taking it is paid for by the crossing that follows. See [method HungryLayout._slalom].
+##
+## [b]And its two ends are harbours (2026-09-25).[/b] A fence of three posts across each
+## end leaves four doors of 201 — about 158 mass — so the dead end a small monster used to
+## be eaten against is the one place on the map nobody bigger can follow it. See
+## [method HungryLayout._append_harbours].
 static func gauntlet() -> HungryPreset:
 	var preset := HungryPreset.new()
 	preset.id = &"gauntlet"
@@ -110,17 +115,18 @@ static func gauntlet() -> HungryPreset:
 	preset.world_size = Vector2(6708.0, 1342.0)
 
 	# [b]Frenzy's density on the floor that is left, which is LOWER than Frenzy's
-	# count.[/b] Five rocks cover 11.3% of the corridor. `HungryWorld._cull_blocked`
-	# takes back whatever the scatter puts inside one, and the scatter then tops the
+	# count.[/b] Five rocks and the two harbour fences' six posts cover 13.0% of the
+	# corridor (the rocks alone were 11.3%, and the target 620, until the harbours).
+	# `HungryWorld._cull_blocked` takes back whatever the scatter puts inside one, and the scatter then tops the
 	# field back up to its target on open floor — so the target is how much food stands
-	# on the floor, and the same count on less floor is MORE food per unit of it. 700
-	# over 7.98 million walkable square units is Frenzy's 77.8 per million.
+	# on the floor, and the same count on less floor is MORE food per unit of it. 609
+	# over 7.83 million walkable square units is Frenzy's 77.8 per million (700 over 9).
 	#
 	# It was raised to 790 when the slalom arrived, on the reasoning that the cull was a
 	# permanent loss to be made up — which is backwards, and made the corridor 27% richer
 	# than the square it was built to match, while a check computing the same backwards
 	# arithmetic agreed with it. Warrens had it right from the start.
-	preset.food_target = 620
+	preset.food_target = 609
 	preset.fruit_target = 18
 	preset.item_target = 26
 	preset.win_mass = 900.0

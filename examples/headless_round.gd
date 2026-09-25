@@ -37,7 +37,7 @@ const HungryWorld := preload("../game/hungry_world.gd")
 const SEED := 20260828
 const TICK_RATE := 60
 
-const CHECKS := 317
+const CHECKS := 331
 
 var _passed := 0
 var _failed := 0
@@ -93,6 +93,7 @@ func _run() -> void:
 	_test_the_reef()
 	_test_the_lagoon()
 	_test_the_den()
+	_test_the_harbours()
 	_test_the_reach()
 	_test_food_on_the_floor()
 	_test_spectating()
@@ -1397,9 +1398,13 @@ func _test_the_slalom() -> void:
 	var bounds := world.arena.bounds
 	var layout := world.layout
 
+	# Five rocks and, since 2026-09-25, a harbour fence across each end; the fences are
+	# the harbours section's, and everything below about lanes asks the five rocks alone.
 	if not _check(
-		layout != null and layout.count() == HungryLayout.SLALOM_COUNT,
-		"five rocks stand down it (%d)" % (layout.count() if layout != null else -1)
+		layout != null
+			and layout.count() == HungryLayout.SLALOM_COUNT + HungryLayout.HARBOUR_POSTS * 2,
+		"five rocks stand down it, and a fence across each end (%d)"
+			% (layout.count() if layout != null else -1)
 	):
 		_drop(world)
 		_done()
@@ -1429,7 +1434,7 @@ func _test_the_slalom() -> void:
 	var alternates := true
 	var centre_across := bounds.get_center().y
 
-	for index in range(layout.count() - 1):
+	for index in range(HungryLayout.SLALOM_COUNT - 1):
 		var here := layout.blocks[index].y - centre_across
 		var next := layout.blocks[index + 1].y - centre_across
 
@@ -1443,15 +1448,18 @@ func _test_the_slalom() -> void:
 
 	# --- The two lanes, which are the level ---------------------------------
 
+	# The five rocks on their own: with the harbours on the map the narrowest gate
+	# anywhere is a harbour door, which is a different tier and asked in its own section.
+	var rocks := layout.part(0, HungryLayout.SLALOM_COUNT)
 	var rules := world.tunables.mass_rules
-	var gate := layout.narrowest_gate(bounds)
-	var fits := layout.fits_through_gate(bounds)
+	var gate := rocks.narrowest_gate(bounds)
+	var fits := rocks.fits_through_gate(bounds)
 	var admits := fits * fits / (rules.base_radius * rules.base_radius)
 
 	_check(
-		gate < layout.narrowest_gap(),
+		gate < rocks.narrowest_gap(),
 		"the narrowest way past a rock is against a WALL, not against another rock",
-		"%.0f against a wall, %.0f between two rocks" % [gate, layout.narrowest_gap()]
+		"%.0f against a wall, %.0f between two rocks" % [gate, rocks.narrowest_gap()]
 	)
 	_check(
 		admits > preset.win_mass * 0.2 and admits < preset.win_mass * 0.45,
@@ -2590,6 +2598,237 @@ func _test_the_den() -> void:
 	_done()
 
 
+## The corridor's ends: a fence of posts across each, with a harbour behind it that a
+## starting monster walks into and one that has fed is held out of.
+##
+## [b]Asked at the size each side of the fence is FOR[/b], like the den: the doors'
+## design number and their tier against the slalom's lanes, the water in front of the
+## fence that must not be a hidden gate, a sweep in which a monster just too big for a
+## door reaches everything but the two harbours, and then driven — a starting monster
+## along a route [method HungryLayout.route_to] finds from the middle of the corridor
+## into the west harbour, and one at 1.6 times the door limit straight at a door.
+func _test_the_harbours() -> void:
+	_section("the harbours")
+
+	var preset := HungryPreset.gauntlet()
+	var world := _make_world(preset, SEED + 223)
+	world.add_player(1, "Ada")
+	_settle(world)
+
+	var bounds := world.arena.bounds
+	var centre := bounds.get_center()
+	var layout := world.layout
+	var rules := world.tunables.mass_rules
+
+	if not _check(
+		layout != null and layout.chains.size() == 2,
+		"the corridor has a fence across each end",
+		"%d fences" % (layout.chains.size() if layout != null else -1)
+	):
+		_drop(world)
+		_done()
+		return
+
+	# The doors, measured off the discs: the gaps between posts and the two gaps between
+	# the end posts and the side walls. One description, two representations — the
+	# constant says 0.3 of the half-width, and this is what the world built.
+	var doors := PackedFloat32Array()
+	var fences_in_line := true
+
+	for chain in range(layout.chains.size()):
+		var run: Vector2i = layout.chains[chain]
+		var first := layout.blocks[run.x]
+		var last := layout.blocks[run.x + run.y - 1]
+
+		if run.y != HungryLayout.HARBOUR_POSTS:
+			fences_in_line = false
+
+		for index in range(run.y):
+			if absf(layout.blocks[run.x + index].x - first.x) > 0.5:
+				fences_in_line = false
+
+		doors.append(first.y - first.z - bounds.position.y)
+
+		for channel in layout.channels(chain):
+			doors.append(float(channel["width"]))
+
+		doors.append(bounds.end.y - last.y - last.z)
+
+	_check(
+		fences_in_line,
+		"each fence is three posts standing square across the corridor"
+	)
+
+	var door: float = Array(doors).min()
+	_check(
+		doors.size() == (HungryLayout.HARBOUR_POSTS + 1) * 2
+			and float(Array(doors).max()) - door < 0.5,
+		"with four doors in each, all the same width",
+		_widths(doors)
+	)
+
+	# [b]The design number.[/b] A sixth of the winning mass: past a starting monster,
+	# short of anybody who has eaten for a minute, and a tier below the slalom's near lane.
+	var door_admits := rules.mass_for(door * 0.5)
+	var rocks := layout.part(0, HungryLayout.SLALOM_COUNT)
+	var lane := rocks.narrowest_gate(bounds)
+	_check(
+		door_admits > preset.win_mass * 0.1 and door_admits < preset.win_mass * 0.25,
+		"a door admits about a sixth of the winning mass",
+		"%.0f of %.0f, through %.0f" % [door_admits, preset.win_mass, door]
+	)
+	_check(
+		rules.radius_for(HungryContent.START_MASS) * 2.0 < door * 0.5,
+		"a starting monster fits with room to spare",
+		"a radius of %.0f through a half-door of %.0f"
+			% [rules.radius_for(HungryContent.START_MASS), door * 0.5]
+	)
+	_check(
+		door < lane * 0.8 and absf(layout.narrowest_gate(bounds) - door) < 0.5,
+		"and it is a tier below the slalom's near lane, and the tightest thing on the map",
+		"%.0f against the near lane's %.0f; narrowest %.0f"
+			% [door, lane, layout.narrowest_gate(bounds)]
+	)
+
+	# The water in front of each fence: the end slalom rock's face to the nearest post.
+	# Narrower than the slalom's own near lane and it would be a second, hidden gate that
+	# only showed itself to a monster already at the corridor's end.
+	var moat := INF
+
+	for chain in range(layout.chains.size()):
+		var run: Vector2i = layout.chains[chain]
+
+		for index in range(run.y):
+			var post := layout.blocks[run.x + index]
+
+			for rock in rocks.blocks:
+				moat = minf(
+					moat,
+					Vector2(post.x, post.y).distance_to(Vector2(rock.x, rock.y)) - post.z - rock.z
+				)
+
+	_check(
+		moat > lane + 20.0,
+		"the water in front of each fence is wider than the slalom's near lane",
+		"%.0f against %.0f" % [moat, lane]
+	)
+
+	# --- Reach, just too big for a door -------------------------------------
+
+	var outgrown := door * 0.5 + 16.0
+	var open_floor := Vector2(centre.x - bounds.size.x * 0.25, centre.y)
+	var sweep := layout.reach(bounds, open_floor, outgrown)
+	var stranded: PackedVector2Array = sweep["stranded"]
+	var loose := 0
+	var behind := [0, 0]
+
+	for point in stranded:
+		var harbour := layout.harbour_of(point, bounds)
+
+		if harbour < 0:
+			loose += 1
+		else:
+			behind[harbour] += 1
+
+	_check(
+		loose == 0 and behind[0] > 0 and behind[1] > 0,
+		"one just too big for a door reaches everything but the two harbours",
+		"radius %.0f: %d of %d reached; %d stranded in the corridor, %d and %d behind the fences"
+			% [outgrown, sweep["reached"], sweep["free"], loose, behind[0], behind[1]]
+	)
+
+	var fence_at := layout.blocks[layout.chains[0].x]
+	var inside := Vector2(
+		(bounds.position.x + fence_at.x + fence_at.z) * 0.5, centre.y + door
+	)
+	_check(
+		layout.harbour_of(inside, bounds) == 0
+			and layout.route_to(bounds, open_floor, inside, outgrown).is_empty()
+			and not layout.route_to(bounds, open_floor, inside, door * 0.5 - 16.0).is_empty(),
+		"so it has no route into the west harbour, and one just under a door has",
+		"inside at %s" % str(inside)
+	)
+
+	# --- Driven: a starting monster from the corridor into the harbour ------
+
+	var from := Vector2(centre.x - bounds.size.x * 0.2, centre.y - bounds.size.y * 0.3)
+	world.spawn(1, from)
+	_run_ticks(world, 2)
+
+	var monster := world.monster_for(1)
+
+	if not _check(monster != null and monster.alive, "a starting monster spawns in the corridor"):
+		_drop(world)
+		_done()
+		return
+
+	var small := monster.pieces[0].radius()
+	# The den's margin: a monster steered at a waypoint swings wide of the leg on a turn.
+	var route := layout.route_to(bounds, monster.centre(), inside, small + 24.0)
+
+	_check(
+		route.size() >= 2,
+		"and has a route into the west harbour that has to turn round rocks to get there",
+		"%d waypoints" % route.size()
+	)
+
+	var reached := 0
+	var deepest := INF
+
+	for _i in range(TICK_RATE * 40):
+		if reached >= route.size():
+			break
+
+		if monster.centre().distance_to(route[reached]) < 40.0:
+			reached += 1
+			continue
+
+		world.tick({1: _full_reach(monster.centre(), route[reached])})
+
+		for piece in monster.pieces:
+			for block in layout.blocks:
+				deepest = minf(
+					deepest,
+					piece.position().distance_to(Vector2(block.x, block.y)) - block.z
+						- piece.radius()
+				)
+
+	_check(
+		deepest > -2.0,
+		"driven along it, it never overlaps a rock or a post on any tick",
+		"deepest %.1f into a face" % deepest
+	)
+	_check(
+		reached == route.size() and layout.harbour_of(monster.centre(), bounds) == 0
+			and monster.centre().x < fence_at.x - fence_at.z,
+		"and it comes through a door to stand behind the fence",
+		"%d of %d waypoints, at %s, the fence's back face at x %.0f"
+			% [reached, route.size(), str(monster.centre()), fence_at.x - fence_at.z]
+	)
+
+	# --- And one that has eaten is held at the door --------------------------
+
+	# In front of the west fence's first gap between posts, driven straight through its
+	# mouth at the end wall: the line runs through a DOOR, so the only thing that can stop
+	# it is the door's width.
+	var mouth: Vector2 = layout.channels(0)[0]["mouth"]
+	var fed := rules.mass_for(door * 0.5) * 1.6
+	_straight_run(
+		world, 1, mouth + Vector2(260.0, 0.0), Vector2(bounds.position.x - 1000.0, mouth.y), fed
+	)
+	monster = world.monster_for(1)
+
+	_check(
+		monster != null and monster.alive and layout.harbour_of(monster.centre(), bounds) < 0,
+		"one at %.0f mass driven through a door is held outside the harbour" % fed,
+		"stopped at %s, the fence's front face at x %.0f"
+			% [str(monster.centre()) if monster != null else "-", fence_at.x + fence_at.z]
+	)
+
+	_drop(world)
+	_done()
+
+
 ## [reach-1]: every level, swept. Every gap passes what it is meant to pass, and nothing on
 ## the floor is out of a starting monster's reach.
 ##
@@ -2608,7 +2847,8 @@ func _test_the_den() -> void:
 ## - [b]A starting monster can reach every sampled point of the floor from the wall.[/b]
 ##   And a monster at the winning mass is kept out only where the level means it to be:
 ##   the warrens' ring, and nowhere at all on the corridor or the reef, whose designs
-##   promise the leader a way everywhere.
+##   promise the leader a way everywhere (the corridor's harbours are too shallow for a
+##   leader to stand in, so they are not part of its floor; see the harbours section).
 func _test_the_reach() -> void:
 	_section("the reach of every level")
 
@@ -2636,6 +2876,14 @@ func _test_the_reach() -> void:
 		var start := rules.radius_for(HungryContent.START_MASS)
 		var won := rules.radius_for(preset.win_mass)
 		var wall := Vector2(bounds.position.x + won + 30.0, bounds.get_center().y)
+
+		# [b]Off the wall until a leader can stand there.[/b] The gauntlet's west end is a
+		# harbour now, and this point is behind its middle post — inside the post for a
+		# starting monster and shut to a leader — so a fill from it would measure one
+		# pocket rather than the floor. Walked east until the winning radius is clear,
+		# which is the wall point itself for every mode without a harbour.
+		while layout.blocked(wall, won) and wall.x < bounds.end.x - won:
+			wall.x += 24.0
 
 		var small := layout.reach(bounds, wall, start)
 		var stranded_small: PackedVector2Array = small["stranded"]
@@ -2697,6 +2945,10 @@ func _test_the_reach() -> void:
 				mode, lane_admits, stranded_big.size(), big["free"]
 			])
 		else:
+			# The gauntlet's harbours do not show here, and that is measured rather than
+			# missed: 296 deep behind the posts, they have no point a leader 480 across can
+			# stand on, so they are not in its floor at all. What a door shuts out is asked
+			# in the harbours section, at the size just over a door.
 			_check(
 				big["reached"] == big["free"],
 				"%s: a leader can reach all of the floor too" % mode,

@@ -41,7 +41,9 @@ const NONE := &""
 ## A ring of gates around a middle, with cover in the corners.
 const WARRENS := &"warrens"
 
-## A line of rocks down a corridor, alternately near one wall and the other.
+## A line of rocks down a corridor, alternately near one wall and the other, and a fence of
+## posts across each end of it with a harbour behind. See [method _slalom] and
+## [method _append_harbours].
 const SLALOM := &"slalom"
 
 ## A barrier across the world whose channels widen from one end to the other, and a
@@ -79,7 +81,10 @@ var rings: Array[Vector2i] = []
 
 ## Which runs of [member blocks] are one barrier, as `(first, count)`.
 ##
-## [b]Empty for a layout that is not made of barriers[/b], which is every one but the reef.
+## [b]Empty for a layout that is not made of barriers[/b], which is the warrens. The reef
+## has two, and the slalom has two short ones: the harbour fences across the corridor's
+## ends, which are barriers in exactly this sense — a run of rocks across the world whose
+## gaps are its doors.
 ## It exists because the reef stopped being one chain: a channel is a gap between two
 ## ADJACENT rocks of the SAME chain, and the last rock of one barrier and the first of the
 ## next are neighbours in [member blocks] and nothing at all on the map. A check that
@@ -306,6 +311,118 @@ static func _slalom(bounds: Rect2) -> HungryLayout:
 			else Vector3(centre.x + across, centre.y + along, radius)
 		)
 
+	# [b]The harbours, appended AFTER the slalom[/b], so the slalom is still blocks 0-4 for
+	# everything written against it before the corridor had ends.
+	_append_harbours(out, bounds)
+
+	return out
+
+
+## How many posts stand in each harbour's fence. Three leaves four doors: two against the
+## walls and two between posts, and the middle post stands on the centre line.
+const HARBOUR_POSTS := 3
+
+## How wide one door is, as a fraction of the corridor's HALF-WIDTH.
+##
+## 201 units at `gauntlet`'s size, so a radius of 100 and a mass of about 158 — a sixth of
+## the winning mass, and a tier below the slalom's near lane (268, about 280 mass). A
+## starting monster (radius 38) walks in; anything that has fed for a minute does not.
+const HARBOUR_DOOR := 0.3
+
+## How far each fence stands from its end wall, centre line to wall, same fraction.
+##
+## [b]Sized by the two gaps it makes.[/b] At `gauntlet`'s size the fence stands 386 from
+## the end wall, which leaves a harbour 296 deep behind the posts' back faces — room for a
+## crowd of starting monsters and about thirty crumbs — and 402 between the end slalom
+## rock and the middle post: wider than the slalom's near lane, so the water in front of
+## the fence is not a hidden gate. Further out and the harbour grows at the moat's
+## expense; the end slalom rock is 1118 from the wall and nothing here moves it.
+const HARBOUR_AT := 0.575
+
+
+## The corridor's ends: a fence of posts across each, with four doors a monster outgrows.
+##
+## [b]In a corridor the end is where a chase finishes.[/b] A square has no dead end — a
+## monster being chased turns and keeps running — and the slalom made the corridor's
+## middle a choice of lanes, but the two ends were still walls with nowhere to go, and a
+## small monster driven down the corridor was eaten against one of them. The harbour turns
+## the worst place on the map into the only refuge on it: behind the fence is floor that
+## nobody over about a sixth of the winning mass can follow a player onto.
+##
+## [b]Four doors, not one, because one door is a cork.[/b] A single gap in the middle of
+## the fence can be sat outside by anybody bigger, and the small monster in the harbour is
+## then trapped rather than safe. With four doors across 1342 units, a monster waiting
+## outside one is 450 units from the next, and the refuge is a place to wait out a chase
+## rather than a cell.
+##
+## [b]The warrens' den is the same rule in a different place.[/b] The den is a refuge in
+## the middle of a map everybody crosses; a harbour is a refuge at the end of a map that
+## everybody is chased along. Both are a tier below the level's main gate, both are rooms
+## a monster can outgrow — one that eats past the limit inside has to split or eject to
+## leave — and both are open to the players furthest behind and to nobody else.
+static func _append_harbours(layout: HungryLayout, bounds: Rect2) -> void:
+	var along_x := bounds.size.x >= bounds.size.y
+	var long_half := maxf(bounds.size.x, bounds.size.y) * 0.5
+	var short_half := minf(bounds.size.x, bounds.size.y) * 0.5
+	var centre := bounds.get_center()
+	var door := short_half * HARBOUR_DOOR
+	var post := harbour_post_radius(short_half)
+	var at := long_half - short_half * HARBOUR_AT
+
+	# West (or north) end first, then east; each fence laid out from the short axis's low
+	# end, so its first channel is the door next to the first post.
+	for side in [-1.0, 1.0]:
+		var fence := PackedVector3Array()
+
+		for step in range(HARBOUR_POSTS):
+			var across := -short_half + door * float(step + 1) + post * float(step * 2 + 1)
+			var along: float = side * at
+			fence.append(
+				Vector3(centre.x + along, centre.y + across, post) if along_x
+				else Vector3(centre.x + across, centre.y + along, post)
+			)
+
+		_append_chain(layout, fence)
+
+
+## The radius of one harbour post: whatever is left of the corridor's width once the four
+## doors are taken out, shared between the posts. Derived, so the doors are the number
+## that was chosen and the posts are what that choice leaves.
+static func harbour_post_radius(short_half: float) -> float:
+	return (short_half * 2.0 - short_half * HARBOUR_DOOR * float(HARBOUR_POSTS + 1)) \
+		/ float(HARBOUR_POSTS * 2)
+
+
+## Which harbour [param at] stands in — the index into [member chains] of the fence it is
+## behind — or -1 if it is not behind one. "Behind" is past the fence's FRONT face, the
+## side facing the corridor's middle, so a point between two posts counts as in the
+## harbour: it is past the line a monster outgrows. Only the slalom has harbours.
+func harbour_of(at: Vector2, bounds: Rect2) -> int:
+	if id != SLALOM:
+		return -1
+
+	var along_x := bounds.size.x >= bounds.size.y
+	var centre := bounds.get_center()
+	var here := (at.x - centre.x) if along_x else (at.y - centre.y)
+
+	for chain in range(chains.size()):
+		var first := blocks[chains[chain].x]
+		var fence := (first.x - centre.x) if along_x else (first.y - centre.y)
+
+		if here * fence > 0.0 and absf(here) > absf(fence) - first.z:
+			return chain
+
+	return -1
+
+
+## The rocks of runs [param first] to [param first] + [param count] as a layout of their
+## own, so a check about one part of a level can ask the part rather than the whole: the
+## slalom's lanes are a question about its five rocks, and with the harbours on the map
+## "the narrowest gate" is a harbour door.
+func part(first: int, count: int) -> HungryLayout:
+	var out := HungryLayout.new()
+	out.id = id
+	out.blocks = blocks.slice(first, first + count)
 	return out
 
 
