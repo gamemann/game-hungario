@@ -706,7 +706,7 @@ godot --headless --path . res://examples/headless_net.tscn     # 158 — the net
 godot --headless --path . res://examples/dedicated.tscn        # 202 — a real DotServer
 godot --headless --path . res://examples/sandbox.tscn          #  99 — two real clients
 godot --headless --path . res://examples/content.tscn          #  46 — the cloud path
-godot --headless --path . res://examples/headless_presentation.tscn  # 70 — the client half
+godot --headless --path . res://examples/headless_presentation.tscn  # 80 — the client half
 ```
 
 936 checks across seven suites. Every one of them has a section counter and a CHECKS total; `sandbox` and `content` were the last two with only the counter, and got theirs on 2026-09-24 (each armed: CHECKS raised by one, exit 1). Add `-- --verbose` to `dedicated`, `sandbox` or `content` when one fails and
@@ -858,6 +858,8 @@ middle of — so a host leaving should cost a moment rather than the session.
 unlocks dot-achievements, and a peer-to-peer host can lie about how much they ate. A host
 who can cheat and a persistent number are one exploit rather than two features, and
 `reporting_allowed()` is the one place that is asked.
+
+**It meets over a real HTTP rendezvous, awaited end to end (`[p2p-await-games]`, 2026-09-26).** Every other party check uses the loopback signaller, which answers inside the call, so a caller that forgot `await` passed against it; `headless_presentation` now stands up game-playground's four-route `RendezvousStub` on a local port (38900-38960) that answers four frames late, hosts with one `HungryParty` and joins with another through `DotP2PSignallerHttp`, and asserts the answer is the stub's and arrives after it answered, the rendezvous was told the host's code and name, the joiner learns who is there and does not elect itself, and a 403 leaves the party closed with a reason. With migration on, "does not elect itself" holds only on arrival: the stub relays no heartbeats, so after `host_timeout_sec` the joiner would migrate the host to itself, and the check is asserted before that. Armed by breaking the stub (an empty join answer fired one check, a 500 on everything fired six), not dot-peer-to-peer.
 
 ## Two of the five screens are dot-ui's now, and both had been copies
 
