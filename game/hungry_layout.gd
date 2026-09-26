@@ -46,8 +46,9 @@ const WARRENS := &"warrens"
 ## [method _append_harbours].
 const SLALOM := &"slalom"
 
-## A barrier across the world whose channels widen from one end to the other, and a
-## second one behind it whose channels widen the other way. See [method _reef].
+## A barrier across the world whose channels widen from one end to the other, a second
+## one behind it with one door, and an atoll in the open sea in front of it whose gates
+## widen from the wall side to the reef side. See [method _reef] and [method _append_atoll].
 const REEF := &"reef"
 
 
@@ -520,8 +521,108 @@ static func _reef(bounds: Rect2) -> HungryLayout:
 	_append_chain(out, _reef_chain(
 		bounds, short_half * LAGOON_AT, back_reef_widths(short_half)
 	))
+	# [b]The atoll, appended LAST[/b], so the two barriers are still blocks 0-9 for
+	# everything written against the reef before its open sea had anything in it.
+	_append_atoll(out, bounds)
 
 	return out
+
+
+## How many rocks the atoll is made of: four, two on the wall side and two on the reef
+## side, which is what makes its gates a gradient — see [method atoll_widths].
+const ATOLL_COUNT := 4
+
+## How big one atoll rock is, as a fraction of the short half-extent. Smaller than a reef
+## rock (0.075): the gates are the design number and the rocks are what holds them apart.
+const ATOLL_RADIUS := 0.025
+
+## How far in front of the fore reef the atoll's centre stands, as the same fraction.
+##
+## [b]Sized by the leader who has to walk past it.[/b] At `reef`'s size the atoll's centre
+## is 1472 in front of the fore reef, which leaves 902 of open water between its reef-side
+## rocks and the fore reef's face — room for a leader 620 across to walk along the reef to
+## the open end without touching either — and 430 between its wall-side rocks and the wall:
+## wider than the tight channel, so it is not a hidden gate tighter than the map's
+## tightest, and narrower than a leader, so the leader's way past is the reef side. The
+## atoll is well clear of both walls along the reef, so nothing behind that 430 is a pocket.
+const ATOLL_AT := 0.595
+
+
+## The reef's third part: an atoll in the open sea in front of the fore reef.
+##
+## [b]The lagoon made crossing cost a grown monster distance; the open sea in front of the
+## fore reef was still 2128 units of empty water where a chase is decided by speed.[/b] The
+## atoll is a ring of four rocks standing in it, and it is the reef's own rule turned
+## round into a room: the fore reef asks "how far along me will you walk to cross", and
+## the atoll asks "which side of me will you walk round to get in". Its gates widen from
+## the wall side to the reef side — the fore reef's tight channel facing the wall, the fore
+## reef's second channel facing the reef, and their mean on the two flanks — so a starting
+## monster gets in from anywhere, a middling one has to go round to a flank or the reef
+## side, and one near the back reef's limit has to go round to the one gate that faces the
+## reef. Anything that fits no gate is exactly who the back reef shuts out everywhere but
+## its door: the atoll is shut to the leader band and to nobody else.
+##
+## [b]Built as an isosceles trapezoid rather than on a circle[/b], because that is the
+## shape whose gates are the design numbers in closed form: the wall-side pair stand the
+## tight gate apart, the reef-side pair the wide gate apart, and their distance along the
+## crossing axis is whatever leaves the mean between each flank pair. Blocks are appended
+## wall-side low end first and round, so [method ring_gates] reads tight, flank, wide,
+## flank — the order [method atoll_widths] describes.
+static func _append_atoll(layout: HungryLayout, bounds: Rect2) -> void:
+	# The crossing axis is the one the reef is NOT built along; the lagoon is on its
+	# positive side, so the open sea — and the atoll — is on its negative side.
+	var chain_along_x := bounds.size.x < bounds.size.y
+	var short_half := minf(bounds.size.x, bounds.size.y) * 0.5
+	var centre := bounds.get_center()
+	var along := Vector2(1.0, 0.0) if chain_along_x else Vector2(0.0, 1.0)
+	var toward_reef := Vector2(0.0, 1.0) if chain_along_x else Vector2(1.0, 0.0)
+	var middle := centre - toward_reef * short_half * ATOLL_AT
+
+	var gates := atoll_widths(short_half)
+	var radius := short_half * ATOLL_RADIUS
+	var wall_half := gates[0] * 0.5 + radius
+	var reef_half := gates[2] * 0.5 + radius
+	var flank := gates[1] + radius * 2.0
+	var depth := sqrt(flank * flank - (reef_half - wall_half) * (reef_half - wall_half)) * 0.5
+	var first := layout.blocks.size()
+
+	for rock in [
+		Vector2(-depth, -wall_half), Vector2(-depth, wall_half),
+		Vector2(depth, reef_half), Vector2(depth, -reef_half),
+	]:
+		var at: Vector2 = middle + toward_reef * rock.x + along * rock.y
+		layout.blocks.append(Vector3(at.x, at.y, radius))
+
+	layout.rings.append(Vector2i(first, ATOLL_COUNT))
+
+
+## The atoll's four gates in ring order — wall side, flank, reef side, flank — in world
+## units.
+##
+## [b]The fore reef's list again, rather than a third set of constants.[/b] The wall-side
+## gate is the fore reef's tight channel, the reef-side gate its second channel (which is
+## also every gate of the back reef), and each flank their mean. So the atoll sorts the
+## same band the back reef does — under about 760 mass gets in, over it does not — and
+## sorts it by side: about 240 mass fits every gate, about 465 the flanks and the reef
+## side, and the rest only the side that faces the reef.
+static func atoll_widths(short_half: float) -> PackedFloat32Array:
+	var fore := channel_widths(short_half)
+	var flank := (fore[0] + fore[1]) * 0.5
+	return PackedFloat32Array([fore[0], flank, fore[1], flank])
+
+
+## The atoll's centre, the point its gates are measured toward. Only the reef has one.
+func atoll_centre() -> Vector2:
+	if id != REEF or rings.is_empty():
+		return Vector2.INF
+
+	var total := Vector2.ZERO
+	var run := rings[0]
+
+	for index in range(run.x, run.x + run.y):
+		total += Vector2(blocks[index].x, blocks[index].y)
+
+	return total / float(run.y)
 
 
 ## One barrier of rocks [param behind] units along the crossing axis from the world's

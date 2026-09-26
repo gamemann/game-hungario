@@ -38,7 +38,7 @@ const HungryWorld := preload("../game/hungry_world.gd")
 const SEED := 20260828
 const TICK_RATE := 60
 
-const CHECKS := 339
+const CHECKS := 355
 
 var _passed := 0
 var _failed := 0
@@ -93,6 +93,7 @@ func _run() -> void:
 	_test_the_slalom()
 	_test_the_reef()
 	_test_the_lagoon()
+	_test_the_atoll()
 	_test_the_den()
 	_test_the_harbours()
 	_test_hunter_round_a_rock()
@@ -1936,9 +1937,10 @@ func _test_the_reef() -> void:
 	var layout := world.layout
 
 	if not _check(
-		layout != null and layout.count() == HungryLayout.REEF_COUNT * 2
+		layout != null
+			and layout.count() == HungryLayout.REEF_COUNT * 2 + HungryLayout.ATOLL_COUNT
 			and layout.chains.size() == 2,
-		"ten rocks stand across it, in two barriers (%d)"
+		"ten rocks stand across it, in two barriers, and four in the atoll (%d)"
 			% (layout.count() if layout != null else -1)
 	):
 		_drop(world)
@@ -2160,7 +2162,7 @@ func _test_the_reef() -> void:
 	_check(
 		predicted.layout.count() == layout.count()
 			and predicted.layout.narrowest_gate(bounds) == layout.narrowest_gate(bounds),
-		"and a client builds the same ten from one name in the hello"
+		"and a client builds the same fourteen from one name in the hello"
 	)
 	_drop(predicted)
 
@@ -2455,6 +2457,321 @@ func _straight_run(
 		furthest = maxf(furthest, monster.centre().dot(direction))
 
 	return furthest
+
+
+## The reef's third part: an atoll in the open sea, whose gates widen from the wall side
+## to the reef side.
+##
+## [b]What this section is about is WHICH SIDE a monster has to come in from, so it
+## drives one round to it.[/b] Every arithmetic check about the four gates would pass
+## over an atoll built with its wide gate facing the wall, or so close to the reef that a
+## leader could not walk past it to the open end; the drive and the leader's leg would not.
+## Asked at the sizes each gate is FOR, like the den and the harbours: a starting monster
+## through the tight gate, one between the flank and the reef-side limits round to the
+## reef side, one between the tight and flank limits held at the tight gate, and one past
+## the widest held at it.
+func _test_the_atoll() -> void:
+	_section("the atoll")
+
+	var preset := HungryPreset.reef()
+	# Lifted for the same reason as the lagoon's: the fed monsters below eat on their way,
+	# and a round that ended under one would respawn it somewhere else.
+	var leader_mass := preset.win_mass
+	preset.win_mass = 1000000.0
+	var world := _make_world(preset, SEED + 227)
+	world.add_player(1, "Ata")
+	_settle(world)
+
+	var bounds := world.arena.bounds
+	var layout := world.layout
+	var rules := world.tunables.mass_rules
+
+	if not _check(
+		layout != null and layout.rings.size() == 1
+			and layout.rings[0] == Vector2i(HungryLayout.REEF_COUNT * 2, HungryLayout.ATOLL_COUNT),
+		"the reef has an atoll: one ring of four rocks after both barriers",
+		"rings %s" % (str(layout.rings) if layout != null else "none")
+	):
+		_drop(world)
+		_done()
+		return
+
+	var short_half := minf(bounds.size.x, bounds.size.y) * 0.5
+	var fore := layout.channels(0)
+	var back := layout.channels(1)
+	var across: Vector2 = fore[0]["normal"]
+
+	if (Vector2(back[0]["mouth"]) - Vector2(fore[0]["mouth"])).dot(across) < 0.0:
+		across = -across
+
+	var fore_line := Vector2(fore[0]["mouth"]).dot(across)
+	var reef_rock := layout.blocks[0].z
+	var middle := layout.atoll_centre()
+	var run := layout.rings[0]
+
+	_check(
+		middle.dot(across) < fore_line - reef_rock,
+		"and it stands in the open sea in front of the fore reef, not in the lagoon",
+		"%.0f in front of the fore reef" % (fore_line - middle.dot(across))
+	)
+
+	# --- The gates, which are the level --------------------------------------
+
+	var wanted := HungryLayout.atoll_widths(short_half)
+	var measured := layout.ring_gates(0)
+	var agree := wanted.size() == measured.size()
+
+	for index in range(mini(wanted.size(), measured.size())):
+		if absf(wanted[index] - measured[index]) > 1.0:
+			agree = false
+
+	_check(
+		agree,
+		"the atoll builds the four gates it describes",
+		"built %s, described %s" % [_widths(measured), _widths(wanted)]
+	)
+
+	# Each gate's mouth, measured off the discs: gate k is between ring rocks k and k+1.
+	var mouths: Array[Vector2] = []
+
+	for step in range(run.y):
+		var a := layout.blocks[run.x + step]
+		var b := layout.blocks[run.x + (step + 1) % run.y]
+		var at := Vector2(a.x, a.y)
+		var towards := (Vector2(b.x, b.y) - at).normalized()
+		mouths.append(at + towards * (a.z + measured[step] * 0.5))
+
+	var wall_gate := mouths[0].dot(across)
+	var reef_gate := mouths[2].dot(across)
+	_check(
+		measured[0] < measured[1] and measured[1] < measured[2]
+			and absf(measured[1] - measured[3]) < 1.0
+			and wall_gate < middle.dot(across) and reef_gate > middle.dot(across),
+		"its gates widen from the wall side to the reef side, the flanks between",
+		"%.0f facing the wall, %.0f and %.0f on the flanks, %.0f facing the reef"
+			% [measured[0], measured[1], measured[3], measured[2]]
+	)
+
+	# [b]One band, sorted by side.[/b] The reef-side gate is the back reef's gate, so the
+	# atoll shuts out exactly who the back reef shuts out everywhere but its door; and its
+	# tightest is the fore reef's tight channel, so nothing on the map got tighter.
+	var won := rules.radius_for(leader_mass)
+	var back_gate := float(back[1]["width"])
+	_check(
+		absf(measured[2] - back_gate) < 1.0 and won > measured[2] * 0.5
+			and absf(measured[0] - float(fore[0]["width"])) < 1.0
+			and absf(layout.narrowest_gate(bounds) - float(fore[0]["width"])) < 1.0,
+		"it admits exactly the back reef's band, and nothing on the map is tighter than before",
+		"reef side admits %.0f mass (the back reef's gate %.0f), a leader is %.0f across; tightest %.0f"
+			% [rules.mass_for(measured[2] * 0.5), back_gate, won * 2.0, layout.narrowest_gate(bounds)]
+	)
+
+	var inside := INF
+
+	for step in range(run.y):
+		var rock := layout.blocks[run.x + step]
+		inside = minf(inside, Vector2(rock.x, rock.y).distance_to(middle) - rock.z)
+
+	_check(
+		inside > measured[2] * 0.5,
+		"inside, a monster at the reef-side gate's limit has room to stand",
+		"%.0f clear of every rock from the centre, against a radius of %.0f"
+			% [inside, measured[2] * 0.5]
+	)
+
+	# --- An island, not a plug ------------------------------------------------
+
+	# The water either side, measured off the discs: the ring's rocks to the fore reef's,
+	# and the ring's rocks to the wall behind it. Both wider than a leader, so the atoll
+	# is walked round from either side and nothing behind it is a pocket for any size up
+	# to the one that ends the round.
+	var to_reef := INF
+	var to_wall := INF
+	var sea_wall := minf(bounds.position.dot(across), bounds.end.dot(across))
+
+	for step in range(run.y):
+		var rock := layout.blocks[run.x + step]
+		var at := Vector2(rock.x, rock.y)
+		to_wall = minf(to_wall, at.dot(across) - sea_wall - rock.z)
+
+		for index in range(layout.chains[0].x, layout.chains[0].x + layout.chains[0].y):
+			var other := layout.blocks[index]
+			to_reef = minf(to_reef, at.distance_to(Vector2(other.x, other.y)) - rock.z - other.z)
+
+	_check(
+		to_reef > won * 2.0 and to_wall > won * 2.0,
+		"the water between it and the reef, and between it and the wall, is wider than a leader",
+		"%.0f to the reef, %.0f to the wall, a leader %.0f across" % [to_reef, to_wall, won * 2.0]
+	)
+
+	# [b]The constraint that placed it.[/b] A leader walks from in front of the tight end
+	# to the open end along the fore reef — the lagoon section drives exactly that leg —
+	# and an atoll in the middle of the sea stood on it.
+	var west: Vector2 = Vector2(fore[0]["mouth"]) - across * 900.0
+	var leg := layout.route_across(west, won)
+	var clear_of_leg := INF
+
+	if leg.size() > 0:
+		for step in range(run.y):
+			var rock := layout.blocks[run.x + step]
+			var at := Vector2(rock.x, rock.y)
+			clear_of_leg = minf(
+				clear_of_leg,
+				at.distance_to(Geometry2D.get_closest_point_to_segment(at, west, leg[0]))
+					- rock.z - won
+			)
+
+	_check(
+		leg.size() > 0 and clear_of_leg > 24.0,
+		"and it stands off the line a leader walks from the tight end to the open end",
+		"%.0f clear of a leader on that leg" % clear_of_leg
+	)
+
+	# --- Reach, at the size each side is for ---------------------------------
+
+	var over := measured[2] * 0.5 + 16.0
+	var open_water := middle + across * (fore_line - reef_rock - middle.dot(across)) * 0.5
+	var sweep := layout.reach(bounds, open_water, over)
+	var elsewhere := 0
+
+	for point in sweep["stranded"]:
+		if point.distance_to(middle) > inside:
+			elsewhere += 1
+
+	_check(
+		sweep["free"] - sweep["reached"] > 0 and elsewhere == 0,
+		"one 16 over the reef-side limit reaches everything but the atoll's inside",
+		"radius %.0f: %d of %d reached, %d stranded outside the atoll"
+			% [over, sweep["reached"], sweep["free"], elsewhere]
+	)
+
+	# --- Driven: round to the reef side --------------------------------------
+
+	# Between the flank limit and the reef-side one, so the only way in is the gate that
+	# faces the reef; started behind the atoll on the wall side, off the axis, so the
+	# route has to go round it rather than straight in.
+	# Fed to just over the flank limit rather than to the middle of the band: a monster
+	# fed in one step swallows whatever its new disc covers on the next tick (97 mass,
+	# here), and it has to arrive planned 24 wider than itself and still fit the reef-side
+	# gate and the 232 of room inside. The band it actually arrived in is asserted.
+	var middling := measured[1] * 0.5 + 2.0
+	var start := middle - across * (to_wall * 0.5 + 200.0) \
+		+ Vector2(-across.y, across.x) * 700.0
+	world.spawn(1, start)
+	_run_ticks(world, 2)
+
+	var monster := world.monster_for(1)
+
+	if not _check(monster != null and monster.alive, "a monster spawns behind the atoll"):
+		_drop(world)
+		_done()
+		return
+
+	world.feed_player(1, rules.mass_for(middling) - monster.mass())
+	_run_ticks(world, 2)
+
+	# On a 12-unit grid rather than 24: planned 24 wider than the monster, the reef-side
+	# gate leaves 16 either side of its throat, and a 24-unit grid steps straight over a
+	# band that narrow and reports no route at all.
+	var route := layout.route_to(
+		bounds, monster.centre(), middle, monster.pieces[0].radius() + 24.0, 12.0
+	)
+	var planned := 0.0
+	var previous := monster.centre()
+
+	for point in route:
+		planned += previous.distance_to(point)
+		previous = point
+
+	var arrived := monster.pieces[0].radius()
+	_check(
+		arrived > measured[1] * 0.5 and arrived + 24.0 < measured[2] * 0.5
+			and route.size() >= 2 and planned > monster.centre().distance_to(middle) * 1.5,
+		"one too wide for the flanks has a route in, and it goes round to the reef side",
+		"radius %.0f (%.0f mass) between the flank's %.0f and the reef side's %.0f: %d waypoints, %.0f long against %.0f straight"
+			% [arrived, monster.mass(), measured[1] * 0.5, measured[2] * 0.5,
+				route.size(), planned, monster.centre().distance_to(middle)]
+	)
+
+	var reached := 0
+	var deepest := INF
+	var entered_from := -INF
+
+	for _i in range(TICK_RATE * 40):
+		if reached >= route.size():
+			break
+
+		if monster.centre().distance_to(route[reached]) < 40.0:
+			reached += 1
+			continue
+
+		var was_outside := monster.centre().distance_to(middle) > inside + 40.0
+		world.tick({1: _full_reach(monster.centre(), route[reached])})
+
+		for piece in monster.pieces:
+			for block in layout.blocks:
+				deepest = minf(
+					deepest,
+					piece.position().distance_to(Vector2(block.x, block.y)) - block.z
+						- piece.radius()
+				)
+
+		if was_outside and monster.centre().distance_to(middle) <= inside + 40.0:
+			entered_from = (monster.centre() - middle).dot(across)
+
+	_check(
+		deepest > -2.0,
+		"driven along it, it never overlaps a rock on any tick",
+		"deepest %.1f into a face" % deepest
+	)
+	_check(
+		reached == route.size() and monster.centre().distance_to(middle) < inside
+			and entered_from > 0.0,
+		"and it comes in through the gate that faces the reef",
+		"%d of %d waypoints, %.0f from the centre, crossed the ring %.0f on the reef side"
+			% [reached, route.size(), monster.centre().distance_to(middle), entered_from]
+	)
+
+	# --- Straight at a gate, at three sizes ----------------------------------
+
+	# From the wall side, straight at the centre: the line runs through the tight gate.
+	var behind := middle - across * (to_wall * 0.5 + 100.0)
+	_straight_run(world, 1, behind, middle, 0.0)
+	monster = world.monster_for(1)
+	_check(
+		monster != null and monster.alive and monster.centre().distance_to(middle) < inside,
+		"a starting monster driven straight in from the wall side comes through the tight gate",
+		"stopped %.0f from the centre"
+			% (monster.centre().distance_to(middle) if monster != null else -1.0)
+	)
+
+	var flanker := rules.mass_for((measured[0] * 0.5 + measured[1] * 0.5) * 0.5)
+	_straight_run(world, 1, behind, middle, flanker)
+	monster = world.monster_for(1)
+	_check(
+		monster != null and monster.alive
+			and (monster.centre() - middle).dot(across) < wall_gate - middle.dot(across),
+		"one of %.0f mass on the same line is held at the tight gate — it fits the flanks" % flanker,
+		"stopped %.0f from the centre, the tight gate is %.0f"
+			% [monster.centre().distance_to(middle) if monster != null else -1.0,
+				middle.dot(across) - wall_gate]
+	)
+
+	# From the reef side, straight at the centre through the widest gate.
+	var fed := rules.mass_for(measured[2] * 0.5) * 1.6
+	_straight_run(world, 1, middle + across * (to_reef * 0.5 + 200.0), middle, fed)
+	monster = world.monster_for(1)
+	_check(
+		monster != null and monster.alive
+			and (monster.centre() - middle).dot(across) > reef_gate - middle.dot(across),
+		"and one at %.0f mass driven through the reef-side gate is held outside it" % fed,
+		"stopped %.0f from the centre, the gate is %.0f"
+			% [monster.centre().distance_to(middle) if monster != null else -1.0,
+				reef_gate - middle.dot(across)]
+	)
+
+	_drop(world)
+	_done()
 
 
 ## The warrens' den: a ring inside the ring, driven into by a starting monster and refused

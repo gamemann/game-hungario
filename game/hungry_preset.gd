@@ -250,8 +250,9 @@ static func reef() -> HungryPreset:
 	# 1,100 over 5,200 squared, 40.7 per million square units. The field REFILLS what
 	# `HungryWorld._cull_blocked` takes out of a rock — a culled slot is a missing slot
 	# and the scatter tops back up to the target — so the target is the number standing
-	# on the floor, and the floor is the rectangle less ten rocks: 20.2 million square
-	# units, 4.4% under rock. 820 is Classic's density on that.
+	# on the floor, and the floor is the rectangle less fourteen rocks: 20.2 million
+	# square units, 4.6% under rock (4.4% before the atoll's four small ones, which moved
+	# the floor by 0.2%). 820 is Classic's density on that.
 	#
 	# It was 880 with one barrier, argued the other way round — as if the cull were a
 	# permanent loss the target had to be raised to cover — which made the reef 4.5%
