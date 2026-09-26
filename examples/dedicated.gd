@@ -4,9 +4,11 @@ const HungryContent := preload("../game/hungry_content.gd")
 const HungryHunters := preload("../game/hungry_hunters.gd")
 const HungryEvents := preload("../game/net/hungry_events.gd")
 const HungryInterest := preload("../game/net/hungry_interest.gd")
+const HungryLayout := preload("../game/hungry_layout.gd")
 const HungryModule := preload("../game/hungry_module.gd")
 const HungryMonster := preload("../game/hungry_monster.gd")
 const HungryNetLink := preload("../game/net/hungry_net_link.gd")
+const HungryPreset := preload("../game/hungry_preset.gd")
 const HungryServices := preload("../game/hungry_services.gd")
 const HungryWorld := preload("../game/hungry_world.gd")
 
@@ -37,7 +39,7 @@ const SERVER_DIR := "user://hungry_dedicated"
 ## prints it to say which game this is, and nothing treats it as proof.
 const APP_URL := "hungario"
 
-const CHECKS := 202
+const CHECKS := 205
 
 var _passed := 0
 var _failed := 0
@@ -98,6 +100,7 @@ func _run() -> void:
 		await _test_live_tools()
 		_test_combat()
 		_test_hunters()
+		_test_hunters_hunt()
 		_test_hazards()
 		await _test_progress()
 		_test_query()
@@ -1300,6 +1303,162 @@ func _test_hunters() -> void:
 
 	world.remove_player(4242)
 	_done()
+
+
+## How far from its quarry the hunt section's stalker starts.
+const GAP := 600.0
+
+
+## [hunter-nav-1]: a hunter on the real server chases what it can eat and runs from what
+## can eat it.
+##
+## [b]The section above counts hunters and never watched one hunt[/b], which is how a
+## hunter that never chased anybody shipped ([warren-nav-1], 2026-09-25). A stalker is
+## placed [constant GAP] from a monster, as far from every bot as the arena allows, and
+## the distance between them is measured over a second and a half of the game's own
+## hunter tick: smaller than it, the gap has to shrink; fed
+## past the eat ratio, it has to grow. The director stays off, so the one hunter is the
+## one placed, and the world is not ticked in between, so the monster stands still and
+## the distance is the hunter's doing. Armed 2026-09-26 by setting the brain's `speed` to
+## zero before each measurement: both distance checks fired.
+func _test_hunters_hunt() -> void:
+	_section("hunters hunt")
+
+	var hunters := _module().hunters
+	var world := _module().world
+	var id := 4243
+	var tag := StringName("%s%d" % [HungryHunters.PLAYER_PREFIX, id])
+	var bounds := world.arena.bounds
+	var centre := bounds.get_center()
+
+	# As far from every bot left over from `bots` as the arena allows. A hunter targets the
+	# nearest thing it perceives, so a bot nearer than the monster placed here would be
+	# what it chased — which the exit probe's copy found, with its bots elsewhere.
+	var others: Array[Vector2] = []
+
+	for monster in world.monsters():
+		if monster.alive and monster.piece_count() > 0:
+			others.append(monster.centre())
+
+	var inner := bounds.grow(-500.0)
+	var prey_at := centre
+	var hunter_at := centre + Vector2.RIGHT * GAP
+	var best := -INF
+
+	for gx in range(9):
+		for gy in range(9):
+			var p := inner.position + inner.size * Vector2(gx / 8.0, gy / 8.0)
+
+			for turn in range(8):
+				var h := p + Vector2.from_angle(TAU * turn / 8.0) * GAP
+
+				if not inner.has_point(h):
+					continue
+
+				var clearance := INF
+
+				for other in others:
+					clearance = minf(clearance, minf(other.distance_to(p), other.distance_to(h)))
+
+				if clearance > best:
+					best = clearance
+					prey_at = p
+					hunter_at = h
+
+	world.add_player(id, "Quarry")
+	world.spawn(id, prey_at)
+	var quarry := world.monster_for(id)
+	var npc := hunters.spawner.spawn_2d(&"stalker", hunter_at)
+
+	if not _check(
+		npc != null and quarry != null and quarry.alive,
+		"a stalker stands %.0f from a starting monster on the running server (nearest bot %.0f off)"
+			% [GAP, best]
+	):
+		hunters.spawner.clear_all()
+		world.remove_player(id)
+		_done()
+		return
+
+	var body := npc.node as Node2D
+	var ticks := 90
+	var step := 1.0 / 60.0
+
+	# Chase: a starting monster (about 20) against a stalker (220).
+	var before := body.global_position.distance_to(quarry.centre())
+
+	for _i in range(ticks):
+		hunters.tick(step)
+
+	var after := body.global_position.distance_to(quarry.centre()) \
+		if npc.is_alive() else INF
+	_check(
+		String(npc.target_id) == String(tag) and after < before - 200.0,
+		"it chases a monster it can eat: the gap shrinks over 1.5 s (%.0f -> %.0f)"
+			% [before, after],
+		"target %s, mass %.0f against %.0f"
+			% [str(npc.target_id), HungryHunters.mass_of(&"stalker"), quarry.mass()]
+	)
+
+	# Flee: the same monster, fed past the eat ratio, from the same start.
+	world.feed_player(id, 400.0)
+	body.global_position = hunter_at
+	before = body.global_position.distance_to(quarry.centre())
+
+	for _i in range(ticks):
+		hunters.tick(step)
+
+	after = body.global_position.distance_to(quarry.centre()) if npc.is_alive() else -INF
+	_check(
+		String(npc.target_id) == String(tag) and after > before + 200.0,
+		"and runs from one that can eat it: the gap grows over 1.5 s (%.0f -> %.0f)"
+			% [before, after],
+		"target %s, mass %.0f against %.0f"
+			% [str(npc.target_id), HungryHunters.mass_of(&"stalker"), quarry.mass()]
+	)
+
+	hunters.spawner.clear_all()
+	world.remove_player(id)
+
+	_time_path_searches()
+	_done()
+
+
+## Information, not a check: what one whole-map path search costs, as a hunter's repath
+## does it (`find_smooth_path`, the spawner's snap, partial paths allowed), so the next
+## run knows whether dot-npc's scan for the nearest point wants a spatial index.
+func _time_path_searches() -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 20260926
+
+	for preset: HungryPreset in [HungryPreset.warrens(), HungryPreset.reef()]:
+		var bounds := Rect2(-preset.world_size * 0.5, preset.world_size)
+		var layout := HungryLayout.for_id(preset.layout, bounds)
+		var built_at := Time.get_ticks_usec()
+		var data := HungryHunters.nav_for(layout, bounds)
+		var graph := DotNpcNavGraph.new()
+		graph.rebuild(data)
+		var build_ms := float(Time.get_ticks_usec() - built_at) / 1000.0
+
+		var total := 0.0
+		var worst := 0.0
+		var found := 0
+		var searches := 50
+
+		for _i in range(searches):
+			var a := data.points[rng.randi_range(0, data.point_count() - 1)]
+			var b := data.points[rng.randi_range(0, data.point_count() - 1)]
+			var started := Time.get_ticks_usec()
+			var path := graph.find_smooth_path(a, b, 100.0, true)
+			var ms := float(Time.get_ticks_usec() - started) / 1000.0
+			total += ms
+			worst = maxf(worst, ms)
+			found += 1 if not path.is_empty() else 0
+
+		print("  info  path search on %s (%d points, %d edges, built in %.0f ms): "
+			% [String(preset.id), data.point_count(), data.edge_count(), build_ms]
+			+ "average %.1f ms, worst %.1f ms over %d searches (%d found)"
+			% [total / searches, worst, searches, found])
 
 
 ## Rocks, spikes and lures.
