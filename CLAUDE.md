@@ -700,7 +700,7 @@ find . -name '*.gd' -not -path './.godot/*' -not -path './addons/*' | while read
     godot --headless --path . --check-only --script "res://${f#./}"
 done
 
-godot --headless --path . res://examples/headless_round.tscn   # 337 — the game
+godot --headless --path . res://examples/headless_round.tscn   # 339 — the game
 godot --headless --path . res://examples/headless_stack.tscn   #  24 checks
 godot --headless --path . res://examples/headless_net.tscn     # 158 — the netcode
 godot --headless --path . res://examples/dedicated.tscn        # 202 — a real DotServer

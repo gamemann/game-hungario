@@ -38,7 +38,7 @@ const HungryWorld := preload("../game/hungry_world.gd")
 const SEED := 20260828
 const TICK_RATE := 60
 
-const CHECKS := 337
+const CHECKS := 339
 
 var _passed := 0
 var _failed := 0
@@ -154,8 +154,12 @@ func _check(condition: bool, what: String, detail: String = "") -> bool:
 ##
 ## `register_service` is off for every one of these: two worlds registered under the same
 ## name would displace each other, and several of these tests hold two at once.
-func _make_world(preset: HungryPreset = null, world_seed: int = SEED) -> HungryWorld:
+func _make_world(
+	preset: HungryPreset = null, world_seed: int = SEED, authority: bool = true
+) -> HungryWorld:
 	var world := HungryWorld.new()
+	# Before setup, as the client sets it: the spectate layer reads it once, there.
+	world.is_authority = authority
 	world.name = "World"
 	world.preset = preset if preset != null else HungryPreset.classic()
 	world.tick_rate = TICK_RATE
@@ -1099,7 +1103,57 @@ func _test_spectating() -> void:
 		"and respawning puts them back in their own view"
 	)
 
+	# A client's world is a MIRROR, and it emits `player_died` too. The chain is the
+	# server's: dot-spectate refuses `on_death` on a mirror with a `push_error`, which goes
+	# to stderr and changes no exit code — so it is counted here rather than left to be
+	# read. Armed: with the authority guard in `HungrySpectate._on_died` removed, the second
+	# check fails with dot-spectate's "on a mirror" error.
+	var mirror := _make_world(null, SEED, false)
+	mirror.add_player(1, "Eaten")
+	mirror.add_player(2, "Eater")
+	_check(
+		mirror.spectate != null and not mirror.spectate.manager.authoritative,
+		"a client's world builds a mirror, not a second authority"
+	)
+
+	var errors := EngineErrors.new()
+	OS.add_logger(errors)
+	mirror.player_died.emit(1, 2)
+	OS.remove_logger(errors)
+
+	var seen := errors.seen()
+	_check(
+		seen.is_empty(),
+		"and a death on it starts no chain of its own, so the engine reports no error",
+		" | ".join(seen)
+	)
+
+	_drop(mirror)
 	_done()
+
+
+## Counts the engine's own errors while installed. A `push_error` goes to stderr and
+## changes no exit code, so without this a green run can print one on every death.
+class EngineErrors extends Logger:
+	var _lock := Mutex.new()
+	var _seen := PackedStringArray()
+
+	func _log_error(
+		_function: String, _file: String, _line: int, code: String, _rationale: String,
+		_editor_notify: bool, _error_type: int, _script_backtraces: Array[ScriptBacktrace]
+	) -> void:
+		_lock.lock()
+		_seen.append(code)
+		_lock.unlock()
+
+	func _log_message(_message: String, _error: bool) -> void:
+		pass
+
+	func seen() -> PackedStringArray:
+		_lock.lock()
+		var out := _seen.duplicate()
+		_lock.unlock()
+		return out
 
 
 func _test_interest() -> void:

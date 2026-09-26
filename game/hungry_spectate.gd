@@ -147,7 +147,14 @@ func next_target(viewer: int) -> DotResult:
 
 
 func _on_died(player_id: int, killer_id: int) -> void:
-	if manager == null:
+	# The server's chain, and only the server's. A client's world is a mirror and emits
+	# `player_died` too — the signal says a death happened, not who decides what follows —
+	# and a mirror's [method DotSpectatorManager.advance] runs no timers, so a chain started
+	# there is a death camera nothing ever hands over. dot-spectate refuses it with a
+	# `push_error` on every death; the view a client draws arrives by `apply_wire`. The
+	# manager's own flag rather than `world.is_authority`, because it is the one dot-spectate
+	# checks, and the two agreeing is `setup`'s business rather than every caller's.
+	if manager == null or not manager.authoritative:
 		return
 	var monster := world.monster_for(player_id)
 	var at := monster.centre() if monster != null else Vector2.ZERO
