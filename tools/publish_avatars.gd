@@ -22,7 +22,7 @@ const HungryContentSource := preload("../game/client/hungry_content_source.gd")
 ## authorises code execution on every player's machine — a pack can contain scripts, and
 ## this one does. Move it into a secrets store and delete the file.
 
-const CHANNEL := "hungry.publish"
+# No `const CHANNEL`. A command-line tool: it prints to the terminal that ran it.
 
 const DEFAULT_OUT := "user://hungry_published"
 const DEFAULT_KEY := "user://hungry_keys/content.key"
