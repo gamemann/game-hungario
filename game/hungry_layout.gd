@@ -47,8 +47,9 @@ const WARRENS := &"warrens"
 const SLALOM := &"slalom"
 
 ## A barrier across the world whose channels widen from one end to the other, a second
-## one behind it with one door, and an atoll in the open sea in front of it whose gates
-## widen from the wall side to the reef side. See [method _reef] and [method _append_atoll].
+## one behind it with one door, an atoll in the open sea in front of it whose gates widen
+## from the wall side to the reef side, and a spit from the sea wall either side of the
+## atoll. See [method _reef], [method _append_atoll] and [method _append_spits].
 const REEF := &"reef"
 
 
@@ -92,6 +93,17 @@ var rings: Array[Vector2i] = []
 ## walked the array pairwise — which is what the reef's section did while there was one
 ## chain — would report a "channel" nine hundred units wide running along the lagoon.
 var chains: Array[Vector2i] = []
+
+## Which runs of [member blocks] are one of the reef's spits, as `(first, count)`, each
+## laid out from the sea wall out. See [method _append_spits].
+##
+## [b]Not [member chains], although a spit is a run of rocks with gaps in it.[/b] A chain
+## is a barrier ACROSS the world, and [method route_across] crosses every chain on the
+## map, nearest first: handed a spit it would plan the lagoon's leader through the gap
+## between two spit rocks it does not fit, or refuse it a route at all. A spit is
+## something a monster goes through or round on the way to a barrier, not one of the
+## barriers, so it has its own list and its own [method spit_gaps].
+var spits: Array[Vector2i] = []
 
 
 static func none() -> HungryLayout:
@@ -521,9 +533,12 @@ static func _reef(bounds: Rect2) -> HungryLayout:
 	_append_chain(out, _reef_chain(
 		bounds, short_half * LAGOON_AT, back_reef_widths(short_half)
 	))
-	# [b]The atoll, appended LAST[/b], so the two barriers are still blocks 0-9 for
-	# everything written against the reef before its open sea had anything in it.
+	# [b]The atoll, appended after both barriers[/b], so the two barriers are still blocks
+	# 0-9 for everything written against the reef before its open sea had anything in it.
 	_append_atoll(out, bounds)
+	# [b]The spits, appended LAST[/b], so the atoll is still blocks 10-13 and still
+	# `rings[0]`. They are neither chains nor rings: see [member spits].
+	_append_spits(out, bounds)
 
 	return out
 
@@ -623,6 +638,104 @@ func atoll_centre() -> Vector2:
 		total += Vector2(blocks[index].x, blocks[index].y)
 
 	return total / float(run.y)
+
+
+## How many rocks one spit is made of. Two leave two gaps: one against the sea wall and
+## one between the rocks — see [method spit_widths].
+const SPIT_COUNT := 2
+
+## How far either side of the crossing axis each spit stands, as a fraction of the short
+## half-extent: half way from the atoll's line to the wall, 1150 at `reef`'s size.
+const SPIT_AT := 0.5
+
+## How big one spit rock is, same fraction. 92 at `reef`'s size.
+##
+## [b]Sized by the leader who walks past the end of it, like the atoll.[/b] The gaps are
+## the design numbers and are fixed; the rock is what decides how far the spit reaches
+## from the wall. At 0.04 it ends 1070 short of the fore reef — wider than a leader (620)
+## and 74 clear of one on the leg the lagoon section drives from the tight end to the open
+## end, which runs 852 from the centre line as it passes the northern spit. At 0.045 the
+## spit ends 4 units off that leg; at 0.05 it stands on it.
+const SPIT_RADIUS := 0.04
+
+
+## The reef's fourth part: a spit from the sea wall on each side of the atoll.
+##
+## [b]The atoll made the middle of the open sea a room; the water north and south of it
+## was still one sea a leader crossed in any direction it liked.[/b] Each spit is two rocks
+## running from the sea wall toward the fore reef, with the fore reef's first two channels
+## for gaps — the tight one against the wall and the second between the rocks — and open
+## water at its reef end. So the sea is one water for anybody under the back reef's band
+## (about 760 mass fits the gap between the rocks, about 240 the one at the wall) and
+## three for a leader: the sea in front of the tight end, the atoll's water, and the sea in
+## front of the open end are joined for it only round the spits' reef ends, in the lane
+## along the fore reef. A middling monster chased across the sea goes through a spit; the
+## leader chasing it goes round, a thousand units further, down the lane everybody can see.
+## It is the reef's rule once more — size decides where you cross, not whether — turned
+## from the reef's own axis onto the sea's.
+##
+## [b]It encloses nothing.[/b] Every gap faces open water on both sides, so no floor is
+## behind a door and nothing here is a refuge a hunter must be refused: a flood at every
+## size up to the widest gap reaches the whole of the sea.
+static func _append_spits(layout: HungryLayout, bounds: Rect2) -> void:
+	var chain_along_x := bounds.size.x < bounds.size.y
+	var short_half := minf(bounds.size.x, bounds.size.y) * 0.5
+	var centre := bounds.get_center()
+	var along := Vector2(1.0, 0.0) if chain_along_x else Vector2(0.0, 1.0)
+	var toward_reef := Vector2(0.0, 1.0) if chain_along_x else Vector2(1.0, 0.0)
+	# The sea wall is the crossing axis's low wall, which in a non-square world is the
+	# LONG half-extent away: the reef is built across the short axis.
+	var sea_half := (bounds.size.y if chain_along_x else bounds.size.x) * 0.5
+	var gaps := spit_widths(short_half)
+	var radius := short_half * SPIT_RADIUS
+
+	for side in [-1.0, 1.0]:
+		var first := layout.blocks.size()
+		var from_wall := 0.0
+
+		for step in range(SPIT_COUNT):
+			from_wall += gaps[step] + radius * (1.0 if step == 0 else 2.0)
+			var at: Vector2 = centre - toward_reef * (sea_half - from_wall) \
+				+ along * (side * short_half * SPIT_AT)
+			layout.blocks.append(Vector3(at.x, at.y, radius))
+
+		layout.spits.append(Vector2i(first, SPIT_COUNT))
+
+
+## A spit's gaps, from the sea wall out, in world units: the fore reef's tight channel
+## against the wall and its second channel between the rocks.
+##
+## [b]The fore reef's list again[/b], for the atoll's reason: the second channel is also
+## every back reef gate and the atoll's reef-side gate, so a spit is shut to exactly the
+## band the back reef shuts out everywhere but its door, and its wall gap to exactly the
+## band the fore reef's tight channel shuts out.
+static func spit_widths(short_half: float) -> PackedFloat32Array:
+	var fore := channel_widths(short_half)
+	return PackedFloat32Array([fore[0], fore[1]])
+
+
+## One spit's gaps as the rocks the world built leave them, from the sea wall out: the
+## first rock to the wall along the crossing axis, then rock to rock. Measured off the
+## discs, like [method channels], so the section compares two representations.
+func spit_gaps(spit: int, bounds: Rect2) -> PackedFloat32Array:
+	var out := PackedFloat32Array()
+
+	if id != REEF or spit < 0 or spit >= spits.size():
+		return out
+
+	var chain_along_x := bounds.size.x < bounds.size.y
+	var run := spits[spit]
+	var first := blocks[run.x]
+	out.append(
+		(first.y - bounds.position.y if chain_along_x else first.x - bounds.position.x) - first.z
+	)
+
+	for index in range(run.x, run.x + run.y - 1):
+		var a := blocks[index]
+		var b := blocks[index + 1]
+		out.append(Vector2(a.x, a.y).distance_to(Vector2(b.x, b.y)) - a.z - b.z)
+
+	return out
 
 
 ## One barrier of rocks [param behind] units along the crossing axis from the world's
@@ -1529,6 +1642,7 @@ func describe() -> Dictionary:
 		"blocks": blocks.size(),
 		"chains": chains.size(),
 		"rings": rings.size(),
+		"spits": spits.size(),
 		"gap": narrowest_gap() if not blocks.is_empty() else 0.0,
 	}
 

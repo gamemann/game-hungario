@@ -38,7 +38,7 @@ const HungryWorld := preload("../game/hungry_world.gd")
 const SEED := 20260828
 const TICK_RATE := 60
 
-const CHECKS := 367
+const CHECKS := 385
 
 var _passed := 0
 var _failed := 0
@@ -95,6 +95,7 @@ func _run() -> void:
 	_test_the_reef()
 	_test_the_lagoon()
 	_test_the_atoll()
+	_test_the_spits()
 	_test_the_den()
 	_test_the_harbours()
 	_test_hunter_round_a_rock()
@@ -1942,8 +1943,9 @@ func _test_the_reef() -> void:
 	if not _check(
 		layout != null
 			and layout.count() == HungryLayout.REEF_COUNT * 2 + HungryLayout.ATOLL_COUNT
+				+ HungryLayout.SPIT_COUNT * 2
 			and layout.chains.size() == 2,
-		"ten rocks stand across it, in two barriers, and four in the atoll (%d)"
+		"ten rocks stand across it, in two barriers, four in the atoll and two in each spit (%d)"
 			% (layout.count() if layout != null else -1)
 	):
 		_drop(world)
@@ -2016,10 +2018,13 @@ func _test_the_reef() -> void:
 	# has to sit between the tight channel and the two open ones: wider and the tight
 	# channel is decoration because everybody can walk round instead, narrower and it is a
 	# slot nothing can use and the barrier is really a wall with four holes.
+	# Asked of the fore reef's own rocks: the spits' first rocks stand the tight channel's
+	# width off the sea wall, and over every block this read that as the run-round.
 	var gate := layout.narrowest_gate(bounds)
 	var run_round := INF
 
-	for block in layout.blocks:
+	for index in range(layout.chains[0].x, layout.chains[0].x + layout.chains[0].y):
+		var block := layout.blocks[index]
 		run_round = minf(run_round, minf(
 			minf(block.x - bounds.position.x, bounds.end.x - block.x),
 			minf(block.y - bounds.position.y, bounds.end.y - block.y)
@@ -2823,6 +2828,375 @@ func _test_the_atoll() -> void:
 
 	_drop(world)
 	_done()
+
+
+## The reef's spits: two rocks from the sea wall either side of the atoll, which a
+## middling monster goes through and a leader has to go round.
+##
+## [b]What the spits are about is the DIFFERENCE between two routes across one line[/b],
+## so this section drives both: a monster between the wall gap's limit and the rock gap's
+## through the gap between the rocks, and a leader from the same start to the same goal
+## round the spit's reef end, in the lane along the fore reef. Every arithmetic check
+## about two gaps would pass over a spit that reached the reef and made the sea three
+## rooms nobody could leave, or one that stood on the leg a leader walks to the open end;
+## the leader's drive and the leg would not. Then straight at each gap at the size it is
+## FOR, like the atoll: a starting monster through the wall gap, a middling one held at
+## it, and one past the rock gap held at that.
+func _test_the_spits() -> void:
+	_section("the spits")
+
+	var preset := HungryPreset.reef()
+	# Lifted for the lagoon's reason: the leader below eats on a 2500-unit walk, and a
+	# round that ended under it would respawn it somewhere else.
+	var leader_mass := preset.win_mass
+	preset.win_mass = 1000000.0
+	var world := _make_world(preset, SEED + 241)
+	world.add_player(1, "Spi")
+	_settle(world)
+
+	var bounds := world.arena.bounds
+	var layout := world.layout
+	var rules := world.tunables.mass_rules
+	var first_spit := HungryLayout.REEF_COUNT * 2 + HungryLayout.ATOLL_COUNT
+
+	if not _check(
+		layout != null and layout.spits.size() == 2
+			and layout.spits[0] == Vector2i(first_spit, HungryLayout.SPIT_COUNT)
+			and layout.spits[1] == Vector2i(first_spit + HungryLayout.SPIT_COUNT, HungryLayout.SPIT_COUNT)
+			and layout.chains.size() == 2 and layout.rings.size() == 1,
+		"the reef has two spits of two rocks after the atoll, and is still two barriers and one ring",
+		"spits %s" % (str(layout.spits) if layout != null else "none")
+	):
+		_drop(world)
+		_done()
+		return
+
+	var short_half := minf(bounds.size.x, bounds.size.y) * 0.5
+	var fore := layout.channels(0)
+	var back := layout.channels(1)
+	var across: Vector2 = fore[0]["normal"]
+
+	if (Vector2(back[0]["mouth"]) - Vector2(fore[0]["mouth"])).dot(across) < 0.0:
+		across = -across
+
+	var chain_axis := Vector2(-across.y, across.x)
+	var fore_line := Vector2(fore[0]["mouth"]).dot(across)
+	var reef_rock := layout.blocks[0].z
+	var middle := layout.atoll_centre()
+	var sea_wall := minf(bounds.position.dot(across), bounds.end.dot(across))
+	var won := rules.radius_for(leader_mass)
+
+	# --- The gaps, which are the level ---------------------------------------
+
+	var wanted := HungryLayout.spit_widths(short_half)
+	var agree := true
+	var built := PackedStringArray()
+
+	for spit in range(layout.spits.size()):
+		var measured := layout.spit_gaps(spit, bounds)
+		built.append(_widths(measured))
+
+		if measured.size() != wanted.size():
+			agree = false
+			continue
+
+		for index in range(wanted.size()):
+			if absf(wanted[index] - measured[index]) > 1.0:
+				agree = false
+
+	_check(
+		agree and wanted[0] < wanted[1],
+		"each spit builds the two gaps it describes, the tight one against the wall",
+		"built %s, described %s" % [" and ".join(built), _widths(wanted)]
+	)
+
+	# In the open sea, from the sea wall toward the reef, one either side of the atoll.
+	var placed := true
+	var sides := PackedFloat32Array()
+	var reef_end := -INF
+
+	for spit in range(layout.spits.size()):
+		var run := layout.spits[spit]
+		var previous := -INF
+
+		for index in range(run.x, run.x + run.y):
+			var rock := layout.blocks[index]
+			var at := Vector2(rock.x, rock.y)
+
+			if at.dot(across) + rock.z > fore_line - reef_rock or at.dot(across) < previous:
+				placed = false
+
+			previous = at.dot(across)
+			reef_end = maxf(reef_end, at.dot(across) + rock.z)
+
+		var first := layout.blocks[run.x]
+		sides.append((Vector2(first.x, first.y) - middle).dot(chain_axis))
+
+	_check(
+		placed and sides.size() == 2 and sides[0] * sides[1] < 0.0,
+		"they run from the sea wall toward the fore reef, one on each side of the atoll",
+		"%.0f and %.0f either side of the atoll, reaching %.0f from the sea wall"
+			% [sides[0], sides[1], reef_end - sea_wall]
+	)
+
+	# --- Round the end: a lane, not a wall ------------------------------------
+
+	var to_reef := INF
+	var to_atoll := INF
+	var clear_of_leg := INF
+	var west: Vector2 = Vector2(fore[0]["mouth"]) - across * 900.0
+	var leg := layout.route_across(west, won)
+	var atoll := layout.rings[0]
+
+	for spit in range(layout.spits.size()):
+		var run := layout.spits[spit]
+
+		for index in range(run.x, run.x + run.y):
+			var rock := layout.blocks[index]
+			var at := Vector2(rock.x, rock.y)
+
+			for other in range(layout.chains[0].x, layout.chains[0].x + layout.chains[0].y):
+				var o := layout.blocks[other]
+				to_reef = minf(to_reef, at.distance_to(Vector2(o.x, o.y)) - rock.z - o.z)
+
+			for other in range(atoll.x, atoll.x + atoll.y):
+				var o := layout.blocks[other]
+				to_atoll = minf(to_atoll, at.distance_to(Vector2(o.x, o.y)) - rock.z - o.z)
+
+			if leg.size() > 0:
+				clear_of_leg = minf(
+					clear_of_leg,
+					at.distance_to(Geometry2D.get_closest_point_to_segment(at, west, leg[0]))
+						- rock.z - won
+				)
+
+	_check(
+		to_reef > won * 2.0 and to_atoll > won * 2.0,
+		"the water round a spit's end, and between it and the atoll, is wider than a leader",
+		"%.0f to the fore reef, %.0f to the atoll, a leader %.0f across"
+			% [to_reef, to_atoll, won * 2.0]
+	)
+	_check(
+		leg.size() > 0 and clear_of_leg > 24.0,
+		"and neither spit stands on the line a leader walks from the tight end to the open end",
+		"%.0f clear of a leader on that leg" % clear_of_leg
+	)
+	_check(
+		absf(layout.narrowest_gate(bounds) - float(fore[0]["width"])) < 1.0,
+		"nothing on the map is tighter than the fore reef's tight channel",
+		"narrowest %.0f, the tight channel %.0f"
+			% [layout.narrowest_gate(bounds), float(fore[0]["width"])]
+	)
+
+	# [b]It encloses nothing[/b], so there is no refuge here a hunter has to be refused
+	# the way the harbours are: the biggest floor a lurker can move about in is all of the
+	# floor it can stand on, and so is a monster's 16 under the rock gap's limit.
+	var lurker := HungryHunters.largest_radius()
+	var region := layout.main_region(bounds, lurker)
+	var under := wanted[1] * 0.5 - 16.0
+	var sweep := layout.reach(
+		bounds, across * (sea_wall + won + 30.0) + chain_axis * middle.dot(chain_axis), under
+	)
+	_check(
+		region["reached"] == region["free"] and sweep["reached"] == sweep["free"],
+		"they enclose nothing: a lurker's floor and a monster's 16 under the rock gap are each one region",
+		"lurker (radius %.0f) %d of %d; radius %.0f reaches %d of %d"
+			% [lurker, region["reached"], region["free"], under, sweep["reached"], sweep["free"]]
+	)
+
+	# --- Two routes across one spit -------------------------------------------
+
+	var run0 := layout.spits[0]
+	var near := layout.blocks[run0.x]
+	var far := layout.blocks[run0.x + 1]
+	var gap_mouth := (Vector2(near.x, near.y) + Vector2(far.x, far.y)) * 0.5
+	var outward := chain_axis if (gap_mouth - middle).dot(chain_axis) > 0.0 else -chain_axis
+	var bay := gap_mouth + outward * 550.0
+	var sheltered := gap_mouth - outward * 550.0
+	var spit_end := layout.blocks[run0.x + run0.y - 1]
+	var end_face := Vector2(spit_end.x, spit_end.y).dot(across) + spit_end.z
+
+	var leader_route := layout.route_to(bounds, bay, sheltered, won + 24.0)
+	var leader_length := _route_length(bay, leader_route)
+	var furthest := -INF
+
+	for point in leader_route:
+		furthest = maxf(furthest, point.dot(across))
+
+	_check(
+		leader_route.size() >= 2 and leader_length > bay.distance_to(sheltered) * 1.5
+			and furthest > end_face + won,
+		"a leader has a way from the sea in front of the tight end to the atoll's water, and it is round the spit's reef end",
+		"%d waypoints, %.0f long against %.0f straight, out to %.0f past the end"
+			% [leader_route.size(), leader_length, bay.distance_to(sheltered), furthest - end_face]
+	)
+
+	# --- Driven: a middling monster through, a leader round -------------------
+
+	world.spawn(1, bay)
+	_run_ticks(world, 2)
+
+	var monster := world.monster_for(1)
+
+	if not _check(monster != null and monster.alive, "a monster spawns in the sea beyond a spit"):
+		_drop(world)
+		_done()
+		return
+
+	# Fed to a little over the wall gap's limit: it swallows what its new disc covers on
+	# the next tick, and has to arrive planned 24 wider than itself and still fit the gap
+	# between the rocks. The band it actually arrived in is asserted.
+	world.feed_player(1, rules.mass_for(wanted[0] * 0.5 + 20.0) - monster.mass())
+	_run_ticks(world, 2)
+
+	var middling := monster.pieces[0].radius()
+	var through := layout.route_to(bounds, monster.centre(), sheltered, middling + 24.0, 12.0)
+	var through_length := _route_length(monster.centre(), through)
+	_check(
+		middling > wanted[0] * 0.5 and middling + 24.0 < wanted[1] * 0.5
+			and through.size() >= 1 and through_length < monster.centre().distance_to(sheltered) * 1.2,
+		"one too wide for the wall gap goes almost straight across, between the rocks",
+		"radius %.0f (%.0f mass) between the wall gap's %.0f and the rock gap's %.0f: %.0f long against %.0f straight"
+			% [middling, monster.mass(), wanted[0] * 0.5, wanted[1] * 0.5, through_length,
+				monster.centre().distance_to(sheltered)]
+	)
+
+	var middling_drive := _drive_route(world, monster, through, across, TICK_RATE * 30)
+	_check(
+		middling_drive["deepest"] > -2.0,
+		"driven along it, it never overlaps a rock on any tick",
+		"deepest %.1f into a face" % middling_drive["deepest"]
+	)
+	_check(
+		middling_drive["reached"] == through.size()
+			and (monster.centre() - gap_mouth).dot(outward) < -far.z,
+		"and comes out on the atoll's side of the spit",
+		"%d of %d waypoints, %.0f past the spit's line"
+			% [middling_drive["reached"], through.size(), -(monster.centre() - gap_mouth).dot(outward)]
+	)
+
+	world.spawn(1, bay)
+	_run_ticks(world, 2)
+	monster = world.monster_for(1)
+	world.feed_player(1, leader_mass - monster.mass())
+	_run_ticks(world, 2)
+
+	var round_route := layout.route_to(bounds, monster.centre(), sheltered, monster.pieces[0].radius() + 24.0)
+	var leader_drive := _drive_route(world, monster, round_route, across, TICK_RATE * 90)
+	_check(
+		leader_drive["deepest"] > -2.0,
+		"a leader driven round it never overlaps a rock on any tick",
+		"deepest %.1f into a face" % leader_drive["deepest"]
+	)
+	_check(
+		leader_drive["reached"] == round_route.size() and leader_drive["furthest"] > end_face + won
+			and (monster.centre() - gap_mouth).dot(outward) < -far.z,
+		"and gets to the atoll's side of the spit only by the lane past its reef end",
+		"%d of %d waypoints, out to %.0f past the end"
+			% [leader_drive["reached"], round_route.size(), leader_drive["furthest"] - end_face]
+	)
+
+	# [b]Both drives at full pace[/b] (`[bot-drive-1]`): covering the route, at the ground
+	# speed the game gives a monster that size. A drive that crawled would pass every check
+	# above given a long enough budget.
+	_check(
+		middling_drive["covered"] > middling_drive["length"] * 0.9
+			and leader_drive["covered"] > leader_drive["length"] * 0.9
+			and middling_drive["pace"] > 0.95 and leader_drive["pace"] > 0.95,
+		"and both covered their routes at their ground speed",
+		"through %.0f of %.0f at %.2f of ground speed; round %.0f of %.0f at %.2f"
+			% [middling_drive["covered"], middling_drive["length"], middling_drive["pace"],
+				leader_drive["covered"], leader_drive["length"], leader_drive["pace"]]
+	)
+
+	# --- Straight at a gap, at the size each is for ---------------------------
+
+	var wall_mouth := Vector2(near.x, near.y) - across * (near.z + wanted[0] * 0.5)
+	var from_bay := wall_mouth + outward * 500.0
+	var to_shelter := wall_mouth - outward * 1000.0
+	var small_got := _straight_run(world, 1, from_bay, to_shelter, 0.0)
+	var line := gap_mouth.dot(-outward)
+	_check(
+		small_got > line + near.z,
+		"a starting monster driven straight at the wall gap comes through it",
+		"reached %.0f, the spit's line is %.0f" % [small_got, line]
+	)
+
+	var between := rules.mass_for((wanted[0] * 0.5 + wanted[1] * 0.5) * 0.5)
+	var middling_got := _straight_run(world, 1, from_bay, to_shelter, between)
+	_check(
+		middling_got < line - near.z,
+		"one of %.0f mass on the same line is held at the wall gap" % between,
+		"reached %.0f, the spit's line is %.0f" % [middling_got, line]
+	)
+
+	var fed := rules.mass_for(wanted[1] * 0.5) * 1.6
+	var big_got := _straight_run(
+		world, 1, gap_mouth + outward * 600.0, gap_mouth - outward * 1000.0, fed
+	)
+	_check(
+		big_got < line - far.z,
+		"and one of %.0f mass driven straight at the gap between the rocks is held at it" % fed,
+		"reached %.0f, the spit's line is %.0f" % [big_got, line]
+	)
+
+	_drop(world)
+	_done()
+
+
+## Drives [param monster] along [param route] at full reach, measuring what the level
+## sections measure: how deep any piece went into any rock, how many waypoints it reached,
+## how far it got along [param axis], and what it covered against the route's length and
+## its ground speed. Prints the `[bot-drive-1]` line.
+func _drive_route(
+	world: HungryWorld, monster: HungryMonster, route: PackedVector2Array, axis: Vector2, budget: int
+) -> Dictionary:
+	var layout := world.layout
+	var from := monster.centre()
+	var reached := 0
+	var deepest := INF
+	var furthest := -INF
+	var covered := 0.0
+	var ground := 0.0
+	var ticks := 0
+	for _i in range(budget):
+		if reached >= route.size():
+			break
+
+		if monster.centre().distance_to(route[reached]) < 40.0:
+			reached += 1
+			continue
+
+		var was := monster.centre()
+		ground += _ground_step(world, monster)
+		world.tick({1: _full_reach(monster.centre(), route[reached])})
+		covered += monster.centre().distance_to(was)
+		ticks += 1
+		furthest = maxf(furthest, monster.centre().dot(axis))
+
+		for piece in monster.pieces:
+			for block in layout.blocks:
+				deepest = minf(
+					deepest,
+					piece.position().distance_to(Vector2(block.x, block.y)) - block.z - piece.radius()
+				)
+
+	_drive_report(from, route, covered, ticks, ground)
+	return {
+		"reached": reached, "deepest": deepest, "furthest": furthest, "covered": covered,
+		"length": _route_length(from, route), "pace": covered / maxf(ground, 0.001),
+	}
+
+
+func _route_length(from: Vector2, route: PackedVector2Array) -> float:
+	var length := 0.0
+	var previous := from
+
+	for point in route:
+		length += previous.distance_to(point)
+		previous = point
+
+	return length
 
 
 ## The warrens' den: a ring inside the ring, driven into by a starting monster and refused

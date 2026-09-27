@@ -1169,10 +1169,10 @@ func _test_game_change() -> void:
 		"and the new field seed"
 	)
 
-	# The same fourteen rocks, both barriers and the atoll, built on the client from the
-	# name in the hello. Compared disc by disc rather than by count: a client that built the
-	# reef against the OLD arena's rectangle has fourteen rocks at the wrong scale, and
-	# fourteen is fourteen.
+	# The same eighteen rocks, both barriers, the atoll and the spits, built on the client
+	# from the name in the hello. Compared disc by disc rather than by count: a client that
+	# built the reef against the OLD arena's rectangle has eighteen rocks at the wrong
+	# scale, and eighteen is eighteen.
 	var same_rocks := _client.world.layout.count() == module.world.layout.count() \
 		and _client.world.layout.chains.size() == module.world.layout.chains.size()
 
