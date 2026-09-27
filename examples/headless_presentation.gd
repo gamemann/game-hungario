@@ -26,7 +26,7 @@ const HungryWorld := preload("../game/hungry_world.gd")
 ##
 ## Exits non-zero on any failure.
 
-const CHECKS := 80
+const CHECKS := 83
 
 var _passed := 0
 var _failed := 0
@@ -46,6 +46,12 @@ func _ready() -> void:
 func _run() -> void:
 	print("game-hungario: the presentation layer")
 
+	# First, before this run opens anything — the party section binds a rendezvous — so
+	# the copy and this run never contend for a port. See [method _run_exit_probe].
+	var probe: Array = []
+	if not _is_exit_probe():
+		probe = await _run_exit_probe()
+
 	_test_schema_is_the_config()
 	_test_sound_is_still_the_bank()
 	_test_limits_the_bank_never_had()
@@ -56,6 +62,9 @@ func _run() -> void:
 	_test_chat_box()
 	_test_the_vote_is_heard()
 	_test_blind_and_beacon()
+
+	if not probe.is_empty():
+		_test_exits_clean(probe)
 
 	print("")
 	_check(
@@ -70,9 +79,13 @@ func _run() -> void:
 	# The total the section counter cannot be. A runtime error inside a section aborts
 	# that function, and the counter is satisfied because the section had already
 	# announced itself. See docs/testing.md.
-	if _passed + _failed != CHECKS:
+	#
+	# The copy of this suite that the exit probe runs does not run the probe itself.
+	var checks := CHECKS - (EXIT_PROBE_CHECKS if _is_exit_probe() else 0)
+
+	if _passed + _failed != checks:
 		print("ERROR: %d checks ran, %d expected. A section aborted part-way." % [
-			_passed + _failed, CHECKS
+			_passed + _failed, checks
 		])
 		get_tree().quit(1)
 		return
@@ -864,3 +877,141 @@ func _test_blind_and_beacon() -> void:
 	p.queue_free()
 	world.queue_free()
 	_done()
+
+
+# --- Exiting clean ----------------------------------------------------------------
+#
+# Ported from `dedicated` ([hunter-nav-1], 2026-09-27). This suite is the one that plays
+# sound, and the eight objects `[hungario-pres-leak]` chased were `HungrySound`'s voices,
+# found by reading stderr by hand: a returning leak here printed a line after `quit()`
+# that no assertion in this process can reach. Duplicated rather than shared, because a
+# suite is a scene with nothing above it to share through.
+
+## The flag this suite hands the copy of itself it runs. See [method _run_exit_probe].
+const EXIT_PROBE_FLAG := "--exit-probe"
+
+## What the exit probe adds to a run — one section, these checks — and the copy does not.
+const EXIT_PROBE_CHECKS := 3
+
+## How long the copy may run before it is killed and this probe fails. A scene whose script
+## failed to parse never reaches `quit()` and prints nothing, so a hang is the likeliest
+## way for the copy to fail. `-- --exit-probe-seconds N` lowers it.
+const EXIT_PROBE_SECONDS := 300
+
+
+func _is_exit_probe() -> bool:
+	return EXIT_PROBE_FLAG in OS.get_cmdline_user_args()
+
+
+func _exit_probe_seconds() -> int:
+	var args := OS.get_cmdline_user_args()
+	var at := args.find("--exit-probe-seconds")
+	if at >= 0 and at + 1 < args.size() and args[at + 1].is_valid_int():
+		return maxi(1, args[at + 1].to_int())
+	return EXIT_PROBE_SECONDS
+
+
+## Runs this same suite in a fresh process: `[exit code, its stdout, its stderr, whether it
+## had to be killed, the seconds it was allowed]`.
+##
+## [b]A leak is reported after `quit()`, by the engine, where nothing in the process that
+## leaked can read it[/b], so the only process that can check a run's exit is another one.
+## Everything below is `dedicated`'s reasoning, unchanged: started rather than
+## `OS.execute`d so a hung copy cannot hold this run for ever, wrapped in coreutils
+## `timeout` so a copy orphaned by an outer kill still dies on time, and drained on every
+## pass because a full 64 KiB pipe blocks the copy's next print.
+func _run_exit_probe() -> Array:
+	var seconds := _exit_probe_seconds()
+	print("(running this suite once more in a fresh process, to read what it leaves at exit — %d s allowed)" % seconds)
+	var scene := scene_file_path if scene_file_path != "" else "res://examples/headless_presentation.tscn"
+	var exe := OS.get_executable_path()
+	var args := PackedStringArray([
+		"--headless", "--path", ProjectSettings.globalize_path("res://"),
+		scene, "--", EXIT_PROBE_FLAG,
+	])
+	var wrapped := false
+	for wrapper: String in ["/usr/bin/timeout", "/bin/timeout"]:
+		if FileAccess.file_exists(wrapper):
+			var outer := PackedStringArray(["--kill-after=10", str(seconds), exe])
+			outer.append_array(args)
+			exe = wrapper
+			args = outer
+			wrapped = true
+			break
+
+	var proc := OS.execute_with_pipe(exe, args, false)
+	if proc.is_empty():
+		return [-1, "", "could not start %s" % exe, false, seconds]
+	var pid: int = proc["pid"]
+	var pipes: Array[FileAccess] = [proc["stdio"], proc["stderr"]]
+	var bytes: Array[PackedByteArray] = [PackedByteArray(), PackedByteArray()]
+	var deadline := Time.get_ticks_msec() + (seconds + 30) * 1000
+	var hung := false
+	while OS.is_process_running(pid):
+		_drain_exit_probe(pipes, bytes)
+		if Time.get_ticks_msec() > deadline:
+			OS.kill(pid)
+			hung = true
+			break
+		await get_tree().create_timer(0.1).timeout
+	# Once more after it exits: the leak report is always the last thing it writes.
+	_drain_exit_probe(pipes, bytes)
+
+	# OS.kill has already reaped it, and asking for the exit code of a reaped pid is an error.
+	var code := -1 if hung else OS.get_process_exit_code(pid)
+	if wrapped and code == 124:
+		hung = true
+	return [code, bytes[0].get_string_from_utf8(), bytes[1].get_string_from_utf8(), hung, seconds]
+
+
+func _drain_exit_probe(pipes: Array[FileAccess], bytes: Array[PackedByteArray]) -> void:
+	for i in pipes.size():
+		while true:
+			var chunk := pipes[i].get_buffer(65536)
+			if chunk.is_empty():
+				break
+			bytes[i].append_array(chunk)
+
+
+func _test_exits_clean(probe: Array) -> void:
+	_section("Exiting clean, as a second process saw it")
+
+	var code: int = probe[0]
+	var stdout: String = probe[1]
+	var stderr: String = probe[2]
+	var hung: bool = probe[3]
+	var seconds: int = probe[4]
+	# Both streams are searched, so "the engine writes leak lines to stderr" stays a fact
+	# about the engine rather than an assumption here.
+	var text := stdout + "\n" + stderr
+	var tail := "its last lines:\n%s\nand the last on stderr:\n%s" % [
+		_last_lines(stdout, 15), _last_lines(stderr, 10)
+	]
+
+	# A copy that was killed never reached its exit, so passing the last two on an absence
+	# of lines would be passing them blind.
+	var passes_detail := ""
+	if hung:
+		passes_detail = ("still running after %d s, so it was killed — a scene that failed to "
+			+ "parse, or a thread still blocked when it quit; %s") % [seconds, tail]
+	elif code != 0:
+		passes_detail = "exit %d; %s" % [code, tail]
+	_check(not hung and code == 0, "this suite, run again in a fresh process, passes",
+		passes_detail)
+	_check(not hung and not text.contains("leaked at exit"), "and leaves no object alive at exit",
+		"it was killed before it reached its exit" if hung else _line_with(text, "leaked at exit"))
+	_check(not hung and not text.contains("still in use at exit"), "and no resource",
+		"it was killed before it reached its exit" if hung else _line_with(text, "still in use at exit"))
+	_done()
+
+
+func _line_with(text: String, needle: String) -> String:
+	for line in text.split("\n"):
+		if line.contains(needle):
+			return line.strip_edges()
+	return ""
+
+
+func _last_lines(text: String, count: int) -> String:
+	var lines := text.strip_edges().split("\n")
+	return "\n".join(lines.slice(maxi(0, lines.size() - count)))
