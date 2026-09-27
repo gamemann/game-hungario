@@ -38,7 +38,7 @@ const HungryWorld := preload("../game/hungry_world.gd")
 const SEED := 20260828
 const TICK_RATE := 60
 
-const CHECKS := 355
+const CHECKS := 367
 
 var _passed := 0
 var _failed := 0
@@ -83,6 +83,7 @@ func _run() -> void:
 	_test_round_reset()
 	_test_determinism()
 	_test_full_round()
+	_test_what_a_bot_travels_at()
 	_test_sound()
 	_test_ejecting()
 	_test_loadout()
@@ -97,6 +98,8 @@ func _run() -> void:
 	_test_the_den()
 	_test_the_harbours()
 	_test_hunter_round_a_rock()
+	_test_where_a_hunter_appears()
+	_test_a_lurker_on_the_shared_graph()
 	_test_the_reach()
 	_test_food_on_the_floor()
 	_test_spectating()
@@ -2343,6 +2346,11 @@ func _test_the_lagoon() -> void:
 	# Full reach toward the next waypoint and on to the one after it at 60 units: near is
 	# slow in this game, and a monster steered with the reach it would get from the
 	# distance to a point crawls the last hundred units of every leg.
+	var drive_from := monster.centre()
+	var drive_covered := 0.0
+	var drive_ground := 0.0
+	var drive_ticks := 0
+
 	for _i in range(TICK_RATE * 120):
 		if reached >= route.size():
 			break
@@ -2351,7 +2359,11 @@ func _test_the_lagoon() -> void:
 			reached += 1
 			continue
 
+		var was := monster.centre()
+		drive_ground += _ground_step(world, monster)
 		world.tick({1: _full_reach(monster.centre(), route[reached])})
+		drive_covered += monster.centre().distance_to(was)
+		drive_ticks += 1
 		ticks += 1
 
 		var piece := monster.pieces[0]
@@ -2369,6 +2381,7 @@ func _test_the_lagoon() -> void:
 			lagoon_low = minf(lagoon_low, here.dot(chain_axis))
 			lagoon_high = maxf(lagoon_high, here.dot(chain_axis))
 
+	_drive_report(drive_from, route, drive_covered, drive_ticks, drive_ground)
 	_check(
 		deepest > -2.0,
 		"a leader driven along its route never overlaps a rock, on any tick",
@@ -2422,6 +2435,34 @@ func _lagoon_walk(route: PackedVector2Array, chain_axis: Vector2) -> float:
 
 
 ## A command at full reach toward [param to].
+## [bot-drive-1]: what a route drive covered, printed beside the checks that ask where it
+## got to — how far it went against the route it was given, and how fast against the ground
+## speed its mass allowed. A drive that "arrived" by being respawned past the gate, or that
+## crawled, reads differently here from one that drove there.
+func _drive_report(from: Vector2, route: PackedVector2Array, covered: float, ticks: int, ground: float) -> void:
+	var length := 0.0
+	var previous := from
+
+	for point in route:
+		length += previous.distance_to(point)
+		previous = point
+
+	var seconds := float(maxi(ticks, 1)) / float(TICK_RATE)
+	print("        driven: covered %.0f of a %.0f-unit route (%.0f%%) in %d ticks, %.1f u/s against a ground speed of %.1f"
+		% [covered, length, covered / maxf(length, 1.0) * 100.0, ticks, covered / seconds, ground / seconds])
+
+
+## How far [param monster]'s ground speed takes it in one tick, at its first piece's mass.
+func _ground_step(world: HungryWorld, monster: HungryMonster) -> float:
+	if monster == null or monster.pieces.is_empty():
+		return 0.0
+
+	return world.tunables.max_speed \
+		* world.tunables.mass_rules.speed_scale(monster.pieces[0].mass()) \
+		* monster.speed_multiplier() \
+		/ float(TICK_RATE)
+
+
 func _full_reach(from: Vector2, to: Vector2) -> Dot2DCommand:
 	var command := Dot2DCommand.new()
 	var offset := to - from
@@ -2697,6 +2738,11 @@ func _test_the_atoll() -> void:
 	var deepest := INF
 	var entered_from := -INF
 
+	var drive_from := monster.centre()
+	var drive_covered := 0.0
+	var drive_ground := 0.0
+	var drive_ticks := 0
+
 	for _i in range(TICK_RATE * 40):
 		if reached >= route.size():
 			break
@@ -2706,7 +2752,11 @@ func _test_the_atoll() -> void:
 			continue
 
 		var was_outside := monster.centre().distance_to(middle) > inside + 40.0
+		var was := monster.centre()
+		drive_ground += _ground_step(world, monster)
 		world.tick({1: _full_reach(monster.centre(), route[reached])})
+		drive_covered += monster.centre().distance_to(was)
+		drive_ticks += 1
 
 		for piece in monster.pieces:
 			for block in layout.blocks:
@@ -2719,6 +2769,7 @@ func _test_the_atoll() -> void:
 		if was_outside and monster.centre().distance_to(middle) <= inside + 40.0:
 			entered_from = (monster.centre() - middle).dot(across)
 
+	_drive_report(drive_from, route, drive_covered, drive_ticks, drive_ground)
 	_check(
 		deepest > -2.0,
 		"driven along it, it never overlaps a rock on any tick",
@@ -2917,6 +2968,11 @@ func _test_the_den() -> void:
 	var deepest := INF
 	var ring_crossed := false
 
+	var drive_from := monster.centre()
+	var drive_covered := 0.0
+	var drive_ground := 0.0
+	var drive_ticks := 0
+
 	for _i in range(TICK_RATE * 40):
 		if reached >= route.size():
 			break
@@ -2925,7 +2981,11 @@ func _test_the_den() -> void:
 			reached += 1
 			continue
 
+		var was := monster.centre()
+		drive_ground += _ground_step(world, monster)
 		world.tick({1: _full_reach(monster.centre(), route[reached])})
+		drive_covered += monster.centre().distance_to(was)
+		drive_ticks += 1
 
 		for piece in monster.pieces:
 			for block in layout.blocks:
@@ -2938,6 +2998,7 @@ func _test_the_den() -> void:
 		if monster.centre().distance_to(centre) < ring_at - ring_rock.z:
 			ring_crossed = true
 
+	_drive_report(drive_from, route, drive_covered, drive_ticks, drive_ground)
 	_check(
 		deepest > -2.0,
 		"driven along it, it never overlaps a rock on any tick",
@@ -3148,6 +3209,11 @@ func _test_the_harbours() -> void:
 	var reached := 0
 	var deepest := INF
 
+	var drive_from := monster.centre()
+	var drive_covered := 0.0
+	var drive_ground := 0.0
+	var drive_ticks := 0
+
 	for _i in range(TICK_RATE * 40):
 		if reached >= route.size():
 			break
@@ -3156,7 +3222,11 @@ func _test_the_harbours() -> void:
 			reached += 1
 			continue
 
+		var was := monster.centre()
+		drive_ground += _ground_step(world, monster)
 		world.tick({1: _full_reach(monster.centre(), route[reached])})
+		drive_covered += monster.centre().distance_to(was)
+		drive_ticks += 1
 
 		for piece in monster.pieces:
 			for block in layout.blocks:
@@ -3166,6 +3236,7 @@ func _test_the_harbours() -> void:
 						- piece.radius()
 				)
 
+	_drive_report(drive_from, route, drive_covered, drive_ticks, drive_ground)
 	_check(
 		deepest > -2.0,
 		"driven along it, it never overlaps a rock or a post on any tick",
@@ -3307,6 +3378,245 @@ func _test_hunter_round_a_rock() -> void:
 	_drop_hunters(hunters)
 	_drop(world)
 	_done()
+
+
+## [hunter-nav-1]: where the director may put a hunter.
+##
+## [b]Until 2026-09-27 the spawn points knew nothing about the level but its rocks[/b], and
+## were seeded once from the world the server booted in: after a game change a director
+## placed hunters on the last map's rings, and nothing refused a point behind a gauntlet
+## harbour's fence — the refuge the corridor promises the players furthest behind. Now
+## every point is out of the rocks at the biggest hunter's size, not in a harbour, and on
+## the biggest floor that size can move about in, and the points follow the layout.
+##
+## The pocket half is checked independently of [method HungryLayout.main_region], which
+## chose the points: one [method HungryLayout.reach] flood from the first point, which has
+## to reach most of the floor, and no other point among what it stranded.
+func _test_where_a_hunter_appears() -> void:
+	_section("where a hunter may appear")
+
+	var radius := HungryHunters.largest_radius()
+
+	for mode: StringName in [&"classic", &"frenzy", &"gauntlet", &"warrens", &"reef"]:
+		var preset := HungryPreset.for_id(mode)
+		var bounds := Rect2(-preset.world_size * 0.5, preset.world_size)
+		var layout := HungryLayout.for_id(preset.layout, bounds)
+		var started := Time.get_ticks_usec()
+		var points := HungryHunters.spawn_points_for(layout, bounds)
+		var ms := float(Time.get_ticks_usec() - started) / 1000.0
+		var bad := PackedStringArray()
+		var stranded := {}
+		var sweep := {}
+
+		if not points.is_empty() and not layout.is_empty():
+			sweep = layout.reach(bounds, points[0], radius)
+
+			for at: Vector2 in sweep["stranded"]:
+				stranded[Vector2i(at.floor())] = true
+
+			if int(sweep["reached"]) * 2 <= int(sweep["free"]):
+				bad.append("the first point reaches %d of %d" % [sweep["reached"], sweep["free"]])
+
+		for at in points:
+			if not bounds.grow(-radius + 0.5).has_point(at):
+				bad.append("%s off the floor" % str(at))
+			elif layout.blocked(at, radius - 0.5):
+				bad.append("%s in a rock" % str(at))
+			elif layout.harbour_of(at, bounds) >= 0:
+				bad.append("%s in a harbour" % str(at))
+			elif not layout.is_empty():
+				# The reach grid's cell centres, 24 apart: a point is stranded when the cell
+				# it stands in is.
+				var cell := (at - bounds.position) / 24.0
+				var centre_of := bounds.position + (cell.floor() + Vector2(0.5, 0.5)) * 24.0
+
+				if stranded.has(Vector2i(centre_of.floor())):
+					bad.append("%s in a pocket" % str(at))
+
+		print("        %s: %d of 36 ring points kept for a radius of %.1f (%.0f ms)"
+			% [mode, points.size(), radius, ms])
+		_check(
+			points.size() >= 12 and bad.is_empty(),
+			"%s: every spawn point is on the floor, out of the rocks and harbours, and nowhere a lurker cannot leave"
+				% mode,
+			"%d points; %s" % [points.size(), ", ".join(bad.slice(0, 4))]
+		)
+
+	# The two refusals, asked directly: a check over the seeded points alone cannot fire on
+	# a harbour or a pocket no ring point happens to fall in today.
+	var g_bounds := Rect2(-HungryPreset.gauntlet().world_size * 0.5, HungryPreset.gauntlet().world_size)
+	var gauntlet := HungryLayout.for_id(HungryLayout.SLALOM, g_bounds)
+	var post := gauntlet.blocks[gauntlet.chains[0].x + 1]
+	var behind := Vector2((g_bounds.position.x + post.x - post.z) * 0.5, post.y)
+	var g_region := gauntlet.main_region(g_bounds, radius)
+	_check(
+		not gauntlet.blocked(behind, radius) and gauntlet.harbour_of(behind, g_bounds) == 0
+			and HungryLayout.in_region(g_region, g_bounds, behind)
+			and not HungryHunters.spawnable(gauntlet, g_bounds, behind, g_region),
+		"a point behind the west harbour's fence, clear of every post and reachable, is refused",
+		"at %s" % str(behind)
+	)
+
+	var w_bounds := Rect2(-HungryPreset.warrens().world_size * 0.5, HungryPreset.warrens().world_size)
+	var warrens := HungryLayout.for_id(HungryLayout.WARRENS, w_bounds)
+	var den_limit := warrens.ring_gates(1)[0] * 0.5
+	var den := w_bounds.get_center()
+	var too_big := warrens.main_region(w_bounds, den_limit + 8.0)
+	var lurker := warrens.main_region(w_bounds, radius)
+	_check(
+		not HungryHunters.spawnable(warrens, w_bounds, den, too_big)
+			and HungryHunters.spawnable(warrens, w_bounds, den, lurker),
+		"the den's middle is refused to a radius 8 over its gate's half-width (%.0f), and allowed to a lurker's (%.1f)"
+			% [den_limit, radius]
+	)
+
+	# A game change: the hunters are set up on one world and handed another, as
+	# [HungryModule] does. The next tick has to seed the new level's points.
+	var first := _make_world(HungryPreset.frenzy(), SEED + 331)
+	var hunters := HungryHunters.new()
+	hunters.name = "Hunters"
+	add_child(hunters)
+	var _ready := hunters.setup(true, first)
+	hunters.tick(1.0 / float(TICK_RATE))
+	var before := hunters.director.spawn_points.size()
+	var second := _make_world(HungryPreset.gauntlet(), SEED + 332)
+	hunters.world = second
+	hunters.spawner.clear_all()
+	hunters.tick(1.0 / float(TICK_RATE))
+	var outside := 0
+
+	for point in hunters.director.spawn_points:
+		var at := DotNpcInstance.from_plane(point)
+
+		if not second.arena.bounds.has_point(at) or second.layout.harbour_of(at, second.arena.bounds) >= 0:
+			outside += 1
+
+	var expected := HungryHunters.spawn_points_for(second.layout, second.arena.bounds).size()
+	_check(
+		outside == 0 and hunters.director.spawn_points.size() == expected,
+		"a game change from frenzy to the gauntlet re-seeds the points on the corridor (%d -> %d)"
+			% [before, hunters.director.spawn_points.size()],
+		"%d outside the corridor or in a harbour; %d expected" % [outside, expected]
+	)
+
+	_drop_hunters(hunters)
+	_drop(first)
+	_drop(second)
+	_done()
+
+
+## [hunter-nav-1]'s size question, measured: one navigation graph serves every hunter kind,
+## laid at the smallest's clearance (40). Does it hold a lurker at a gate?
+##
+## [b]Not on any map there is, because a lurker fits every gate.[/b] The item was written
+## for a lurker 480 across — that is a MONSTER of 900 mass on this game's curve (radius
+## 8 √mass) — and a hunter is drawn and pushed out at `4 √(mass / π)`, 67.7 for a lurker,
+## 135 across, against a narrowest gate of 201 (a harbour door) and 202 (the den). So the
+## shared graph only ever leads it along a face a little closer than it can stand, and the
+## push-out slides it. Driven through both of the narrowest gates on the maps, it gets
+## there; the stalker's time over the same arrangement is printed beside it.
+func _test_a_lurker_on_the_shared_graph() -> void:
+	_section("a lurker on the shared graph")
+
+	var widest := HungryHunters.radius_of(&"lurker") * 2.0
+	print("        a lurker is %.0f across; the narrowest gates are a harbour door and the den's" % widest)
+
+	for arrangement in [&"den", &"harbour"]:
+		var budget := TICK_RATE * 15
+		var runs := {}
+
+		for kind: StringName in [&"stalker", &"lurker"]:
+			runs[kind] = _hunt_through(arrangement, kind, budget)
+
+		var lurker: Dictionary = runs[&"lurker"]
+		var stalker: Dictionary = runs[&"stalker"]
+		print("        %s: stalker %d ticks, lurker %d ticks (%d of them held against a rock), gate %.0f"
+			% [arrangement, stalker["ticks"], lurker["ticks"], lurker["held"], lurker["gate"]])
+		_check(
+			bool(lurker["eaten"]),
+			"through the %s gate (%.0f): a lurker following the shared graph eats a monster behind it inside 15 s"
+				% [arrangement, lurker["gate"]],
+			"%d ticks, %d held; the lurker at %s, the prey at %s"
+				% [lurker["ticks"], lurker["held"], str(lurker["at"]), str(lurker["prey"])]
+		)
+
+	_done()
+
+
+## One hunt through the narrowest gate of [param arrangement]: `den` is the warrens' den,
+## the hunter in the moat on a diagonal behind a den rock and the prey in the middle;
+## `harbour` is the gauntlet's west fence, the hunter in front of the middle post and the
+## prey behind it. Returns ticks, whether it ate, and how many ticks it moved less than a
+## fifth of its speed while chasing ("held").
+func _hunt_through(arrangement: StringName, kind: StringName, budget: int) -> Dictionary:
+	var preset := HungryPreset.warrens() if arrangement == &"den" else HungryPreset.gauntlet()
+	var world := _make_world(preset, SEED + 341)
+	world.add_player(1, "Ada")
+	_settle(world)
+	var layout := world.layout
+	var bounds := world.arena.bounds
+	var centre := bounds.get_center()
+	var reach := HungryHunters.radius_of(kind)
+	var prey_at := centre
+	var hunter_at := centre
+	var gate := 0.0
+
+	if arrangement == &"den":
+		var rock := layout.blocks[layout.rings[1].x]
+		var rock_at := Vector2(rock.x, rock.y)
+		var out := (rock_at - centre).normalized()
+		hunter_at = rock_at + out * (rock.z + reach + 60.0)
+		gate = layout.ring_gates(1)[0]
+	else:
+		var post := layout.blocks[layout.chains[0].x + 1]
+		prey_at = Vector2((bounds.position.x + post.x - post.z) * 0.5, post.y)
+		hunter_at = Vector2(post.x + post.z + 400.0, post.y)
+		gate = bounds.size.y * 0.5 * HungryLayout.HARBOUR_DOOR
+
+	world.spawn(1, prey_at)
+	_run_ticks(world, 2)
+	var prey := world.monster_for(1)
+
+	var hunters := HungryHunters.new()
+	hunters.name = "Hunters"
+	add_child(hunters)
+	var _ready := hunters.setup(true, world)
+	hunters.tick(1.0 / float(TICK_RATE))
+	var npc := hunters.spawner.spawn_2d(kind, hunter_at)
+	var out := {"eaten": false, "ticks": 0, "held": 0, "gate": gate, "at": hunter_at, "prey": prey_at}
+
+	if npc == null or prey == null or not prey.alive:
+		_drop_hunters(hunters)
+		_drop(world)
+		return out
+
+	var body := npc.node as Node2D
+	var speed := float(npc.def.meta.get("speed", 0.0))
+	var step := 1.0 / float(TICK_RATE)
+	var last := body.global_position
+
+	for _i in range(budget):
+		if not prey.alive:
+			break
+
+		hunters.tick(step)
+		out["ticks"] = int(out["ticks"]) + 1
+
+		if npc.is_alive():
+			var brain: Object = npc.brain
+
+			if brain != null and brain.machine.current() == &"chase" \
+					and body.global_position.distance_to(last) < speed * step * 0.2:
+				out["held"] = int(out["held"]) + 1
+
+			last = body.global_position
+
+	out["eaten"] = not prey.alive
+	out["at"] = body.global_position if npc.is_alive() else Vector2.INF
+	out["prey"] = prey.centre() if prey.alive else prey_at
+	_drop_hunters(hunters)
+	_drop(world)
+	return out
 
 
 func _drop_hunters(hunters: Node) -> void:
@@ -3644,6 +3954,146 @@ func _test_determinism() -> void:
 
 # --- The whole thing -------------------------------------------------------
 	_done()
+
+## [bot-drive-1]: what a bot actually travels at, against the speed the game gives it.
+##
+## [b]In the 3D games a bot held forward and jump and crawled at the air cap.[/b] This is a
+## 2D game and has no jump; its motor is agar.io's, and the speed a monster is GIVEN is
+## `max_speed` × `speed_scale(mass)` × its trait and effects — the ground speed below,
+## worked per piece per tick. What it GETS is that times how hard the pointer is pushed:
+## the wish ramps from nothing at `dead_reach` (7) to full at `full_speed_reach` (105), so
+## pointing at a crumb 50 units away asks for half speed. [HungryBot] points at what it
+## wants — the pointer on the crumb — so a bot slows as it arrives at every crumb, which is
+## what a person steering with a mouse does too.
+##
+## So two numbers, both printed beside their assertion: a monster held at full reach
+## travels at its ground speed (the level sections drive with [method _full_reach] for
+## exactly this reason, and print what they covered), and eight bots playing a round
+## travel at 0.94 of it (2026-09-27): unlike the 3D games', hungario's bots do cover
+## ground at the speed the game gives them.
+func _test_what_a_bot_travels_at() -> void:
+	_section("what a bot actually travels at")
+
+	# --- The control: full reach, one direction, an empty box ------------------
+	var world := _make_world(HungryPreset.frenzy(), SEED + 401)
+	world.add_player(1, "Ada")
+	_settle(world)
+	var bounds := world.arena.bounds
+	world.spawn(1, bounds.get_center() - Vector2(bounds.size.x * 0.4, 0.0))
+	_run_ticks(world, 2)
+	var monster := world.monster_for(1)
+	var held := _travel_ratio(world, {1: null}, TICK_RATE * 3, TICK_RATE,
+		func(m: HungryMonster, _t: int) -> Dot2DCommand:
+			return _full_reach(m.centre(), m.centre() + Vector2.RIGHT * 1000.0))
+	print("        held at full reach: %.1f u/s against a ground speed of %.1f (%.3f), mass %.0f"
+		% [held["actual"], held["ground"], held["ratio"], monster.mass() if monster != null else 0.0])
+	_check(
+		held["samples"] > 0 and absf(float(held["ratio"]) - 1.0) < 0.02,
+		"a monster held at full reach travels at its ground speed (%.3f of it)" % held["ratio"],
+		"%d samples" % held["samples"]
+	)
+	_drop(world)
+
+	# --- Eight bots, a real round ----------------------------------------------
+	world = _make_world(HungryPreset.classic(), SEED + 402)
+
+	for id in range(1, 9):
+		world.add_player(id, "Bot %d" % id)
+
+	_settle(world)
+	var ids := {}
+
+	for id in range(1, 9):
+		ids[id] = null
+
+	var bots := _travel_ratio(world, ids, TICK_RATE * 30, TICK_RATE * 2,
+		func(m: HungryMonster, t: int) -> Dot2DCommand:
+			return HungryBot.command_for(world, m, t))
+	print(("        eight bots over 28 s of classic: %.1f u/s against a ground speed of %.1f (%.3f); "
+		+ "%.0f%% of piece-ticks at 95%% or more of it, %.0f%% under half")
+		% [bots["actual"], bots["ground"], bots["ratio"], bots["full"] * 100.0, bots["crawl"] * 100.0])
+	# [b]Measured 2026-09-27: 0.937, 65% of piece-ticks at ground speed, 3% under half.[/b]
+	# The shortfall is the pointer landing on a crumb, by design; most of a bot's travel
+	# is toward something further than 105 away. The floor is 0.85 and half the ticks at
+	# ground speed: the 3D family's shape — a bot whose command asks for almost nothing
+	# whatever it wants — fails both. Armed with the bot's reach capped at 40: 0.42, 1%.
+	_check(
+		bots["samples"] > 0 and float(bots["ratio"]) > 0.85 and float(bots["full"]) > 0.5,
+		"eight bots travel at %.2f of their ground speed, %.0f%% of the time at all of it"
+			% [bots["ratio"], bots["full"] * 100.0],
+		"%d samples" % bots["samples"]
+	)
+	_drop(world)
+	_done()
+
+
+## Ticks [param world] for [param ticks], each monster in [param ids] steered by
+## [param steer], and from [param warmup] on compares how far every piece moved in a tick
+## with how far its ground speed would take it. Returns the mean actual and ground speeds,
+## their ratio, and the fraction of piece-ticks at 95% or more and under 50%.
+##
+## A piece that appeared, vanished or jumped more than twice its ground step — a split, a
+## merge, being eaten, a respawn — is not a sample: that is not travel.
+func _travel_ratio(world: HungryWorld, ids: Dictionary, ticks: int, warmup: int, steer: Callable) -> Dictionary:
+	var step := 1.0 / float(TICK_RATE)
+	var rules := world.tunables.mass_rules
+	var actual := 0.0
+	var ground := 0.0
+	var samples := 0
+	var full := 0
+	var crawl := 0
+
+	for tick in range(ticks):
+		var before := {}
+		var allowed := {}
+		var commands := {}
+
+		for monster in world.monsters():
+			if not ids.has(monster.id) or not monster.alive:
+				continue
+
+			commands[monster.id] = steer.call(monster, tick)
+
+			for piece in monster.pieces:
+				before[piece.id] = piece.position()
+				allowed[piece.id] = world.tunables.max_speed * rules.speed_scale(piece.mass()) \
+					* monster.speed_multiplier(tick)
+
+		world.tick(commands)
+
+		if tick < warmup:
+			continue
+
+		for monster in world.monsters():
+			if not ids.has(monster.id) or not monster.alive:
+				continue
+
+			for piece in monster.pieces:
+				if not before.has(piece.id):
+					continue
+
+				var moved: float = piece.position().distance_to(before[piece.id]) / step
+				var limit: float = allowed[piece.id]
+
+				if limit <= 0.0 or moved > limit * 2.0:
+					continue
+
+				actual += moved
+				ground += limit
+				samples += 1
+
+				if moved >= limit * 0.95:
+					full += 1
+				elif moved < limit * 0.5:
+					crawl += 1
+
+	var n := float(maxi(samples, 1))
+	return {
+		"actual": actual / n, "ground": ground / n,
+		"ratio": actual / ground if ground > 0.0 else 0.0,
+		"full": float(full) / n, "crawl": float(crawl) / n, "samples": samples,
+	}
+
 
 func _test_full_round() -> void:
 	_section("a whole round, eight bots")

@@ -1188,6 +1188,92 @@ func reach(bounds: Rect2, from: Vector2, radius: float, cell: float = 24.0) -> D
 	return {"free": total, "reached": reached, "stranded": stranded}
 
 
+## The biggest stretch of floor a disc of [param radius] can move about in, as
+## `{"columns", "rows", "cell", "seen": PackedByteArray, "reached": int, "free": int}`:
+## [method reach] turned round, asking "which floor is the map" rather than "where can I
+## get from here", because a thing placed with no player to walk from has no here.
+##
+## [b]For a spawn that must not land in a pocket.[/b] Floor outside the biggest region is
+## floor a thing that size cannot leave: a room whose door it does not fit, or a cranny
+## between two rocks. Asked of a hunter's size, it is where a hunter must not appear.
+## Every free cell is flooded once, whichever region it belongs to.
+func main_region(bounds: Rect2, radius: float, cell: float = 24.0) -> Dictionary:
+	var grid := _grid(bounds, radius, cell)
+	var columns: int = grid["columns"]
+	var rows: int = grid["rows"]
+	var free: PackedByteArray = grid["free"]
+	var diagonal := _diagonal_check(bounds, radius, cell, columns)
+	var taken := PackedByteArray()
+	taken.resize(free.size())
+	var best := PackedByteArray()
+	best.resize(free.size())
+	var best_count := 0
+	var total := 0
+
+	for index in range(free.size()):
+		if free[index] == 1:
+			total += 1
+
+	for index in range(free.size()):
+		if free[index] == 0 or taken[index] == 1:
+			continue
+
+		var seen := _fill(free, columns, rows, index, diagonal)
+		var count := 0
+
+		for at in range(seen.size()):
+			if seen[at] == 1:
+				taken[at] = 1
+				count += 1
+
+		if count > best_count:
+			best_count = count
+			best = seen
+
+		# Past half, nothing left can be bigger.
+		if best_count * 2 > total:
+			break
+
+	return {
+		"columns": columns, "rows": rows, "cell": cell, "seen": best,
+		"reached": best_count, "free": total,
+	}
+
+
+## Whether [param at] stands in [param region] ([method main_region]'s answer for the same
+## bounds). A point exactly at a rock's clearance can sit in a cell whose centre is just
+## inside it, so the cell's eight neighbours count as well: a region is floor a disc moves
+## about in, and a disc one cell off it is on it.
+static func in_region(region: Dictionary, bounds: Rect2, at: Vector2) -> bool:
+	var columns: int = region["columns"]
+	var rows: int = region["rows"]
+	var seen: PackedByteArray = region["seen"]
+	var home := _cell_of(bounds, at, float(region["cell"]), columns, rows)
+
+	if home < 0:
+		return false
+
+	if seen[home] == 1:
+		return true
+
+	for next in _neighbours(home, columns, rows):
+		if seen[next] == 1:
+			return true
+
+	var column := home % columns
+	var row := home / columns
+
+	for dy in [-1, 1]:
+		for dx in [-1, 1]:
+			var c: int = column + dx
+			var r: int = row + dy
+
+			if c >= 0 and r >= 0 and c < columns and r < rows and seen[r * columns + c] == 1:
+				return true
+
+	return false
+
+
 ## A route from [param from] to [param to] for a monster of [param radius], as waypoints
 ## no straight leg of which passes through a rock, or nothing when there is none.
 ##

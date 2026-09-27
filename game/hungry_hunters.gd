@@ -319,21 +319,59 @@ func _build_director() -> DotResult:
 	director.enabled = false
 	add_child(director)
 
-	# Somewhere to put them. A ring rather than a grid: an arena is a square and its
-	# corners are where nobody goes, so a grid spends most of its points on places a
-	# player never is — and `spawn_min_distance` would reject them anyway.
-	_seed_spawn_points()
-
+	# Somewhere to put them: [method spawn_points_for], seeded by [method _keep_nav_current]
+	# on the first tick of every layout rather than once here, because the world this was
+	# set up with is not the world a game change leaves it with.
 	return DotResult.success(null)
 
 
 func _seed_spawn_points() -> void:
-	if world == null or world.arena == null:
+	if world == null or world.arena == null or director == null:
 		return
 
-	var bounds := world.arena.bounds
-	var centre := bounds.get_center()
 	var points := PackedVector3Array()
+
+	for at in spawn_points_for(world.layout, world.arena.bounds):
+		points.append(DotNpcInstance.to_plane(at))
+
+	director.spawn_points = points
+
+
+## The radius a spawn point is chosen for: the biggest hunter's, because the director's
+## points are shared by every kind and a point that suits a lurker suits all three.
+static func largest_radius() -> float:
+	var out := 0.0
+
+	for def in shared_catalogue().npcs:
+		out = maxf(out, radius_of(def.id))
+
+	return out
+
+
+## Where a hunter may appear in [param layout] inside [param bounds].
+##
+## Three rings rather than a grid: an arena is a square and its corners are where nobody
+## goes, so a grid spends most of its points on places a player never is — and
+## `spawn_min_distance` would reject them anyway. Each point is walked out of the level's
+## rocks, because two of the three rings pass straight through Warrens' ring — a spawn
+## point inside a rock is a hunter that appears inside one, and the push-out would shove it
+## out at the first tick in a direction nobody chose.
+##
+## [b]And then two refusals ([hunter-nav-1], 2026-09-27).[/b] A point behind a gauntlet
+## harbour's fence is refused: a harbour is the refuge at the end of a corridor everybody
+## is chased along, and a hunter that appears inside it has been put where the level
+## promised the players furthest behind nobody would follow them. And a point outside the
+## biggest floor [method largest_radius] can move about in is refused — a room whose door
+## the biggest hunter does not fit, or a cranny it cannot leave. No layout has one of those
+## at the hunters' sizes today (a lurker is 135 across and the narrowest gate on any map is
+## 201); the refusal is for the layout that does, which would otherwise hold a hunter for
+## its whole life with nothing saying why.
+static func spawn_points_for(layout: HungryLayout, bounds: Rect2) -> PackedVector2Array:
+	var out := PackedVector2Array()
+	var centre := bounds.get_center()
+	var radius := largest_radius()
+	var solid := layout != null and not layout.is_empty()
+	var region := layout.main_region(bounds, radius) if solid else {}
 
 	for ring in [0.35, 0.6, 0.85]:
 		for step in range(12):
@@ -341,18 +379,27 @@ func _seed_spawn_points() -> void:
 			var at := centre + Vector2(cos(angle), sin(angle)) \
 				* bounds.size * 0.5 * float(ring)
 
-			# Out of the level's geometry, because two of these three rings pass straight
-			# through Warrens' ring of rocks — a spawn point inside a rock is a hunter
-			# that appears inside one, and the push-out above would then shove it out at
-			# the first tick in a direction nobody chose.
-			if world.layout != null and not world.layout.is_empty():
-				at = world.layout.nearest_clear(
-					at, radius_of(&"stalker"), bounds
-				)
+			if solid:
+				at = layout.nearest_clear(at, radius, bounds)
 
-			points.append(DotNpcInstance.to_plane(at))
+				if not spawnable(layout, bounds, at, region):
+					continue
 
-	director.spawn_points = points
+			out.append(at)
+
+	return out
+
+
+## Whether a hunter may appear at [param at]: not behind a harbour's fence, and inside
+## [param region] ([method HungryLayout.main_region] at the size being placed).
+static func spawnable(layout: HungryLayout, bounds: Rect2, at: Vector2, region: Dictionary) -> bool:
+	if layout == null or layout.is_empty():
+		return bounds.has_point(at)
+
+	if layout.harbour_of(at, bounds) >= 0:
+		return false
+
+	return HungryLayout.in_region(region, bounds, at)
 
 
 ## Whether the director is releasing hunters.
@@ -428,9 +475,13 @@ const NAV_SPACING := 64.0
 ## [b]The smallest hunter's clearance, deliberately, rather than each hunter's own.[/b]
 ## A grid per hunter kind would be three graphs for one map. A bigger hunter following
 ## a path laid for a small one is steered along a rock's face and slides along it on
-## [method _keep_out_of_the_level]'s push-out, which is the behaviour a player expects;
-## one routed through a gate it cannot fit is held at the gate, which is the level
-## working. What the path fixes is the hunter that walked at the middle of a rock with its
+## [method _keep_out_of_the_level]'s push-out, which is the behaviour a player expects.
+## No hunter meets a gate it cannot fit: the biggest, a lurker, is 135 across and the
+## narrowest gate on any map is 201, and driven through both of the narrowest it is held
+## against a rock for no tick at all (`headless_round`, 2026-09-27) — so per-kind graphs
+## would buy nothing today. A layout with a gate under 135 is where to revisit this; until
+## then [method spawn_points_for] keeps a hunter out of anywhere it could not leave.
+## What the path fixes is the hunter that walked at the middle of a rock with its
 ## target behind it and stayed there.
 const NAV_CLEARANCE := 40.0
 
@@ -520,6 +571,11 @@ func _keep_nav_current() -> void:
 	_nav_built = true
 	var bounds := world.arena.bounds if world.arena != null else Rect2()
 	spawner.set_nav_data(nav_for(layout, bounds))
+	# The spawn points are the level's as much as the graph is. Until 2026-09-27 they were
+	# seeded once, from the world the server booted in, so after a game change a director
+	# placed hunters on the last map's rings: off the edge of a corridor that followed a
+	# square, and never refused out of the new map's harbours ([hunter-nav-1]).
+	_seed_spawn_points()
 
 
 ## Pushes every hunter out of the level's own geometry.
