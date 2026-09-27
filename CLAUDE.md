@@ -720,10 +720,10 @@ godot --headless --path . res://examples/headless_net.tscn     # 158 — the net
 godot --headless --path . res://examples/dedicated.tscn        # 205 — a real DotServer
 godot --headless --path . res://examples/sandbox.tscn          #  99 — two real clients
 godot --headless --path . res://examples/content.tscn          #  46 — the cloud path
-godot --headless --path . res://examples/headless_presentation.tscn  # 83 — the client half
+godot --headless --path . res://examples/headless_presentation.tscn  # 90 — the client half
 ```
 
-1000 checks across seven suites. Every one of them has a section counter and a CHECKS total; `sandbox` and `content` were the last two with only the counter, and got theirs on 2026-09-24 (each armed: CHECKS raised by one, exit 1). Add `-- --verbose` to `dedicated`, `sandbox` or `content` when one fails and
+1007 checks across seven suites. Every one of them has a section counter and a CHECKS total; `sandbox` and `content` were the last two with only the counter, and got theirs on 2026-09-24 (each armed: CHECKS raised by one, exit 1). Add `-- --verbose` to `dedicated`, `sandbox` or `content` when one fails and
 the reason is in a log line rather than in the assertion.
 
 **Run `headless_round` after any change to dot-2d** and **`headless_net` after any change
@@ -757,6 +757,7 @@ tools/screenshot_map.sh reef --at=632,1180 --name=lagoon   # a player standing i
 tools/screenshot_map.sh reef --at=-1368,0 --name=atoll   # a player inside the atoll, its tight gate to the wall side
 tools/screenshot_map.sh reef --at=-1647,-1150 --name=spit   # a player in the gap between a spit's two rocks
 tools/screenshot_map.sh warrens --admin  # also <mode>_beacon and <mode>_blind: an admin's marks
+tools/screenshot_map.sh warrens --fx     # also <mode>_fx: a burst and four mouthfuls, through the real presentation
 tools/screenshot_menus.sh              # the screens
 ```
 
@@ -850,6 +851,10 @@ back, because the config is what the rest of the client reads.
 
 Both are the same decision twice: **two copies of one list is this family's most repeated
 bug**, and an addon that makes you write a second one has cost you something.
+
+### The effect scenes, which did not exist until 2026-09-27
+
+`fx_catalogue()` named `eat_pop` and `burst` under `scenes/fx/`, a directory this repository never had, and dot-fx refuses a missing scene at DEBUG — so no mouthful ever popped and no monster ever burst on screen, while `headless_presentation`'s effects section passed on the shake and the tint, which need no scene. `FX_DIR` was also a `const` naming `res://scenes/fx` outright, which a delivered pack resolves against the host's root; it is `HungryPaths.rebase` now. The two scenes are script-free `CPUParticles2D` with a generated soft round texture — a pop of eight crumbs, a burst of twenty-eight fragments — at `z_index` 5, over the renderer's -1. `_build_fx` warns when a scene is missing, as mg-buses-from-hell's `BfhFx.setup` does. The section now asserts `missing_scenes()` is empty, that a burst and a mouthful and a fruit each put particles where they happened and over the world, and that a round reset takes something rather than nothing (7 checks; armed: `eat_pop.tscn` removed fired 3 and the exit probe's copy, the burst's `z_index` removed fired 1). Rendered with `tools/screenshot_map.sh warrens --fx` and looked at: the first burst was a clump the size of the monster, and it throws its fragments now.
 
 ### The bug it found, which is the family's own shape again
 

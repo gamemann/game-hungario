@@ -1,0 +1,38 @@
+[gd_scene load_steps=4 format=3]
+
+[sub_resource type="Gradient" id="soft"]
+offsets = PackedFloat32Array(0, 0.4, 1)
+colors = PackedColorArray(1, 1, 1, 1, 1, 1, 1, 0.6, 1, 1, 1, 0)
+
+[sub_resource type="GradientTexture2D" id="soft_tex"]
+gradient = SubResource("soft")
+width = 16
+height = 16
+fill = 1
+fill_from = Vector2(0.5, 0.5)
+fill_to = Vector2(1, 0.5)
+
+[sub_resource type="Gradient" id="pop_ramp"]
+offsets = PackedFloat32Array(0, 0.5, 1)
+colors = PackedColorArray(1, 0.97, 0.8, 1, 0.95, 0.85, 0.45, 0.8, 0.9, 0.7, 0.3, 0)
+
+[node name="EatPop" type="Node2D"]
+z_index = 5
+
+[node name="Crumbs" type="CPUParticles2D" parent="."]
+amount = 8
+lifetime = 0.3
+one_shot = true
+explosiveness = 1.0
+texture = SubResource("soft_tex")
+emission_shape = 1
+emission_sphere_radius = 4.0
+spread = 180.0
+gravity = Vector2(0, 0)
+initial_velocity_min = 60.0
+initial_velocity_max = 140.0
+damping_min = 120.0
+damping_max = 160.0
+scale_amount_min = 0.5
+scale_amount_max = 0.9
+color_ramp = SubResource("pop_ramp")

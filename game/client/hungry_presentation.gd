@@ -2,6 +2,7 @@ extends Node
 
 const HungryConfig := preload("../hungry_config.gd")
 const HungryEvents := preload("../net/hungry_events.gd")
+const HungryPaths := preload("../hungry_paths.gd")
 const HungryServices := preload("../hungry_services.gd")
 const HungrySound := preload("hungry_sound.gd")
 const HungrySoundSink := preload("hungry_sound_sink.gd")
@@ -28,7 +29,10 @@ const HungrySoundSink := preload("hungry_sound_sink.gd")
 
 const CHANNEL := "hungry.presentation"
 
-const FX_DIR := "res://scenes/fx"
+## Where the two effect scenes are, wherever this copy of the game is mounted. A `const`
+## until 2026-09-27, which a delivered pack would have resolved against the host's root;
+## it named two scenes that did not exist either, so nothing had ever looked.
+static var FX_DIR := HungryPaths.rebase("res://scenes/fx")
 
 ## The ping an administrator's beacon makes. See [method sound_catalogue].
 const BEACON_SOUND := &"beacon"
@@ -377,6 +381,16 @@ func _build_fx() -> DotResult:
 	var res := fx.setup()
 	if not res.ok:
 		return res.wrap("hungario's effects")
+
+	# [b]Said out loud, because a missing scene is otherwise a DEBUG line.[/b] Until
+	# 2026-09-27 both scenes this catalogue names were missing, and every pop and burst
+	# was refused for it with no suite noticing. `headless_presentation` asserts the list
+	# is empty; this is for a build that lost one anyway.
+	var missing := fx.catalogue.missing_scenes()
+	if not missing.is_empty():
+		DotLog.warn(CHANNEL, "effect scenes missing; those effects will not draw", {
+			"paths": ", ".join(missing),
+		})
 	return DotResult.success(null)
 
 

@@ -26,7 +26,7 @@ const HungryWorld := preload("../game/hungry_world.gd")
 ##
 ## Exits non-zero on any failure.
 
-const CHECKS := 83
+const CHECKS := 90
 
 var _passed := 0
 var _failed := 0
@@ -280,6 +280,46 @@ func _test_effects() -> void:
 	p.present(0.016, Vector2.ZERO)
 	_check(p.camera_shake() != Vector2.ZERO, "while your own does both")
 	_check(p.fx.flash_colour.a > 0.0, "including the tint")
+
+	# [b]Drawn, not only decided.[/b] Until 2026-09-27 neither scene existed, dot-fx
+	# refused both at DEBUG, and every check above passed: a shake and a tint need no
+	# scene. So: are the files there, and does an event put a node where it happened.
+	var missing := HungryPresentation.fx_catalogue().missing_scenes()
+	_check(
+		missing.is_empty(),
+		"every scene the effect catalogue names is present (missing: %s)" % ", ".join(missing)
+	)
+
+	var drawn := {}
+	p.fx.spawned.connect(func(id: StringName, node: Node, why: StringName) -> void:
+		drawn[id] = node if node != null else why
+	)
+	p.on_burst(Vector2(40, -25), false)
+	var burst: Variant = drawn.get(&"burst")
+	_check(
+		burst is Node2D and (burst as Node2D).global_position.is_equal_approx(Vector2(40, -25)),
+		"a burst is drawn where the monster was (%s)" % str(burst)
+	)
+	_check(
+		burst is Node and not (burst as Node).find_children("*", "CPUParticles2D").is_empty(),
+		"and it is particles, not an empty node"
+	)
+	_check(
+		burst is CanvasItem and (burst as CanvasItem).z_index > 0,
+		"over the world, which the renderer draws at z -1"
+	)
+
+	p.on_food_eaten(Vector2(-12, 30), 1)
+	var pop: Variant = drawn.get(&"eat_pop")
+	_check(
+		pop is Node2D and (pop as Node2D).global_position.is_equal_approx(Vector2(-12, 30)),
+		"a mouthful pops where it was eaten (%s)" % str(pop)
+	)
+	drawn.clear()
+	p.present(0.016, Vector2.ZERO)
+	p.on_fruit_eaten(Vector2(5, 5))
+	_check(drawn.get(&"eat_pop") is Node2D, "and so does a fruit (%s)" % str(drawn.get(&"eat_pop")))
+	_check(p.fx.live_count() > 0, "so there is something for a reset to take")
 
 	p.on_round_reset()
 	_check(p.fx.live_count() == 0, "a round reset takes every effect with it")

@@ -1,6 +1,9 @@
 extends SceneTree
 
 const HungryCamera := preload("../game/client/hungry_camera.gd")
+const HungryConfig := preload("../game/hungry_config.gd")
+const HungryPresentation := preload("../game/client/hungry_presentation.gd")
+const HungrySound := preload("../game/client/hungry_sound.gd")
 const HungryHud := preload("../game/client/hungry_hud.gd")
 const HungryPreset := preload("../game/hungry_preset.gd")
 const HungryRenderer := preload("../game/client/hungry_renderer.gd")
@@ -51,6 +54,7 @@ func _initialize() -> void:
 	var at := Vector2.INF
 	var tag := ""
 	var admin := false
+	var fx := false
 
 	for argument in OS.get_cmdline_user_args():
 		if argument.begins_with("--at="):
@@ -62,6 +66,8 @@ func _initialize() -> void:
 			tag = "_" + argument.trim_prefix("--name=")
 		elif argument == "--admin":
 			admin = true
+		elif argument == "--fx":
+			fx = true
 		elif not argument.begins_with("-"):
 			wanted = StringName(argument)
 
@@ -113,6 +119,13 @@ func _initialize() -> void:
 	# are all in one picture; the blind frame is this player's own screen, blacked out
 	# under the HUD, which is the one frame where "the blind covers the viewport" means
 	# anything at all — a headless viewport is 64 x 64.
+	# Both of dot-fx's effects, through the real presentation layer: a burst beside the
+	# player and a few mouthfuls round it. See [method _fx].
+	# Before the grown frame, which feeds the player and does not give it back: a pop is
+	# sized for a starting monster's mouthful.
+	if fx:
+		_shots.insert(2, {"name": "%s%s_fx" % [wanted, tag], "mass": 0.0, "whole": false, "fx": true})
+
 	if admin:
 		_shots.append({"name": "%s%s_beacon" % [wanted, tag], "mass": 0.0, "whole": false, "beacon": true})
 		_shots.append({"name": "%s%s_blind" % [wanted, tag], "mass": 0.0, "whole": false, "blind": true})
@@ -237,6 +250,9 @@ func _process(_delta: float) -> bool:
 		if shot.has("beacon"):
 			_beacon_two()
 
+		if shot.has("fx"):
+			_fx()
+
 		if shot.has("blind"):
 			_hud.visible = true
 			_world.monster_for(1).blinded = true
@@ -260,6 +276,37 @@ func _process(_delta: float) -> bool:
 	_at += 1
 	_wait = SETTLE
 	return false
+
+
+## A burst beside the player and four mouthfuls round it, drawn by the real
+## [HungryPresentation] as the client draws them.
+##
+## [b]Restarted once spawned.[/b] A one-shot's first update ages it by the whole frame,
+## and the frame this tool's first shot follows can be longer than a pop lives.
+func _fx() -> void:
+	var sound := HungrySound.make()
+	root.add_child(sound)
+	var presentation := HungryPresentation.new()
+	presentation.name = "Presentation"
+	presentation.config = HungryConfig.new()
+	presentation.sound = sound
+	root.add_child(presentation)
+	var built := presentation.setup()
+
+	if not built.ok:
+		push_error(str(built.error))
+		return
+
+	var me := _world.monster_for(1).centre()
+	presentation.present(0.016, me)
+	presentation.on_burst(me + Vector2(170.0, -20.0), false)
+
+	for offset in [Vector2(-90, -60), Vector2(-120, 40), Vector2(60, 90), Vector2(-30, 110)]:
+		presentation.present(0.016, me)
+		presentation.on_food_eaten(me + offset, 1)
+
+	for particles in presentation.fx.find_children("*", "CPUParticles2D", true, false):
+		(particles as CPUParticles2D).restart()
 
 
 ## Two more monsters, both beaconed: one beside the player, one in the far corner of the
