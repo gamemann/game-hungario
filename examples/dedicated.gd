@@ -1385,6 +1385,23 @@ func _test_hunters_hunt() -> void:
 	var step := 1.0 / 60.0
 
 	# Chase: a starting monster (about 20) against a stalker (220).
+	#
+	# [b]The clock starts when the chase does, and the stalker is put back first.[/b] How
+	# long it wanders before its senses settle on the monster depends on the instance id —
+	# it seeds the wander heading and the perception's stagger — and that differs between
+	# processes: timed from the spawn, one run closed 600 to 245 and the exit probe's copy
+	# closed only to 445, a check that failed on an unchanged tree (2026-09-27).
+	var noticed := 0
+	var brain: Object = npc.brain
+
+	while noticed < 120 and not (
+		brain != null and brain.get(&"machine") != null
+		and brain.machine.current() == &"chase"
+	):
+		hunters.tick(step)
+		noticed += 1
+
+	body.global_position = hunter_at
 	var before := body.global_position.distance_to(quarry.centre())
 
 	for _i in range(ticks):
@@ -1394,8 +1411,8 @@ func _test_hunters_hunt() -> void:
 		if npc.is_alive() else INF
 	_check(
 		String(npc.target_id) == String(tag) and after < before - 200.0,
-		"it chases a monster it can eat: the gap shrinks over 1.5 s (%.0f -> %.0f)"
-			% [before, after],
+		"it chases a monster it can eat: the gap shrinks over 1.5 s (%.0f -> %.0f, chasing after %d ticks)"
+			% [before, after, noticed],
 		"target %s, mass %.0f against %.0f"
 			% [str(npc.target_id), HungryHunters.mass_of(&"stalker"), quarry.mass()]
 	)
