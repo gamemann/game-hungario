@@ -38,7 +38,7 @@ const HungryWorld := preload("../game/hungry_world.gd")
 const SEED := 20260828
 const TICK_RATE := 60
 
-const CHECKS := 385
+const CHECKS := 403
 
 var _passed := 0
 var _failed := 0
@@ -96,6 +96,7 @@ func _run() -> void:
 	_test_the_lagoon()
 	_test_the_atoll()
 	_test_the_spits()
+	_test_the_cove()
 	_test_the_den()
 	_test_the_harbours()
 	_test_hunter_round_a_rock()
@@ -1943,9 +1944,9 @@ func _test_the_reef() -> void:
 	if not _check(
 		layout != null
 			and layout.count() == HungryLayout.REEF_COUNT * 2 + HungryLayout.ATOLL_COUNT
-				+ HungryLayout.SPIT_COUNT * 2
+				+ HungryLayout.SPIT_COUNT * 2 + 2
 			and layout.chains.size() == 2,
-		"ten rocks stand across it, in two barriers, four in the atoll and two in each spit (%d)"
+		"ten rocks stand across it, in two barriers, four in the atoll, two in each spit and two in the cove (%d)"
 			% (layout.count() if layout != null else -1)
 	):
 		_drop(world)
@@ -3138,6 +3139,283 @@ func _test_the_spits() -> void:
 		big_got < line - far.z,
 		"and one of %.0f mass driven straight at the gap between the rocks is held at it" % fed,
 		"reached %.0f, the spit's line is %.0f" % [big_got, line]
+	)
+
+	_drop(world)
+	_done()
+
+
+## The reef's fifth part: a cove against the open-end wall, a refuge for the tight
+## channel's tier at the end of the map where every crossing admits the chaser too.
+##
+## [b]What this section is about is that the cove is a ROOM and not a wall[/b]: three
+## doors that admit exactly who the tight channel admits, floor behind them that nobody
+## bigger can reach or reach into, and water round the outside that a leader still walks
+## through at its ground speed. Every arithmetic check would pass over a cove whose posts
+## stood in a leader's way, so a leader is driven past it; and every one would pass over
+## a cove too shallow to shelter anybody, so one that has eaten is pressed into a door and
+## the gap between its front and a starting monster at the back is measured.
+func _test_the_cove() -> void:
+	_section("the cove")
+
+	var preset := HungryPreset.reef()
+	var leader_mass := preset.win_mass
+	# Lifted for the spits' reason: the leader below would end the round by eating on its
+	# walk, and the reset would respawn it somewhere else.
+	preset.win_mass = 1000000.0
+	var world := _make_world(preset, SEED + 251)
+	world.add_player(1, "Cov")
+	_settle(world)
+
+	var bounds := world.arena.bounds
+	var layout := world.layout
+	var rules := world.tunables.mass_rules
+	var first_cove := HungryLayout.REEF_COUNT * 2 + HungryLayout.ATOLL_COUNT \
+		+ HungryLayout.SPIT_COUNT * 2
+
+	if not _check(
+		layout != null and layout.coves.size() == 1
+			and layout.coves[0] == Vector2i(first_cove, 2)
+			and layout.count() == first_cove + 2
+			and layout.chains.size() == 2 and layout.rings.size() == 1 and layout.spits.size() == 2,
+		"the reef has one cove of two posts after the spits, and is still two barriers, one ring and two spits",
+		"coves %s, %d rocks" % [
+			str(layout.coves) if layout != null else "none", layout.count() if layout != null else -1
+		]
+	):
+		_drop(world)
+		_done()
+		return
+
+	var short_half := minf(bounds.size.x, bounds.size.y) * 0.5
+	var fore := layout.channels(0)
+	var back := layout.channels(1)
+	var across: Vector2 = fore[0]["normal"]
+
+	if (Vector2(back[0]["mouth"]) - Vector2(fore[0]["mouth"])).dot(across) < 0.0:
+		across = -across
+
+	var chain_axis := Vector2(-across.y, across.x)
+	# The open end: the side of the chain its widest channel is on.
+	var open_side := signf(Vector2(fore[fore.size() - 1]["mouth"]).dot(chain_axis))
+	var outward := chain_axis * open_side
+	var wall := maxf(bounds.position.dot(outward), bounds.end.dot(outward))
+	var fore_line := Vector2(fore[0]["mouth"]).dot(across)
+	var sea := layout.blocks[first_cove]
+	var reefward := layout.blocks[first_cove + 1]
+	var sea_at := Vector2(sea.x, sea.y)
+	var reef_at := Vector2(reefward.x, reefward.y)
+	var won := rules.radius_for(leader_mass)
+	var start := rules.radius_for(HungryContent.START_MASS)
+
+	# --- The doors, which are the level ---------------------------------------
+
+	var door := HungryLayout.cove_door(short_half)
+	var doors := PackedFloat32Array([
+		wall - sea_at.dot(outward) - sea.z,
+		sea_at.distance_to(reef_at) - sea.z - reefward.z,
+		wall - reef_at.dot(outward) - reefward.z,
+	])
+	_check(
+		absf(door - float(fore[0]["width"])) < 0.5
+			and float(Array(doors).max()) - door < 0.5 and door - float(Array(doors).min()) < 0.5,
+		"its three doors, measured off the discs, are each the fore reef's tight channel",
+		"built %s, the tight channel %.0f" % [_widths(doors), float(fore[0]["width"])]
+	)
+
+	var mouth := (sea_at + reef_at) * 0.5
+	_check(
+		sea_at.dot(outward) > 0.0 and absf(sea_at.dot(outward) - reef_at.dot(outward)) < 0.5
+			and sea_at.dot(across) < reef_at.dot(across)
+			and reef_at.dot(across) + reefward.z < fore_line - layout.blocks[0].z,
+		"it stands against the open-end wall, in front of the fore reef, sea-side post first",
+		"posts %.0f off the wall, %.0f and %.0f in front of the fore reef"
+			% [wall - sea_at.dot(outward), fore_line - sea_at.dot(across), fore_line - reef_at.dot(across)]
+	)
+
+	# --- A leader's water, round the outside ----------------------------------
+
+	var to_spit := INF
+	var to_reef := INF
+
+	for post in [sea, reefward]:
+		var at := Vector2(post.x, post.y)
+
+		for spit in layout.spits:
+			for index in range(spit.x, spit.x + spit.y):
+				var o := layout.blocks[index]
+				to_spit = minf(to_spit, at.distance_to(Vector2(o.x, o.y)) - post.z - o.z)
+
+		for index in range(layout.chains[0].x, layout.chains[0].x + layout.chains[0].y):
+			var o := layout.blocks[index]
+			to_reef = minf(to_reef, at.distance_to(Vector2(o.x, o.y)) - post.z - o.z)
+
+	_check(
+		to_spit > won * 2.0 + 40.0 and to_reef > won * 2.0 + 40.0,
+		"the water between it and the spit, and between it and the fore reef, is wider than a leader",
+		"%.0f to the spit, %.0f to the fore reef, a leader %.0f across" % [to_spit, to_reef, won * 2.0]
+	)
+	_check(
+		absf(layout.narrowest_gate(bounds) - float(fore[0]["width"])) < 1.0,
+		"and nothing on the map is tighter than the fore reef's tight channel",
+		"narrowest %.0f" % layout.narrowest_gate(bounds)
+	)
+
+	# --- A room: it holds more than it lets out -------------------------------
+
+	var inside := mouth + outward * ((wall - mouth.dot(outward)) * 0.5)
+	var holds := minf(
+		wall - inside.dot(outward),
+		minf(inside.distance_to(sea_at) - sea.z, inside.distance_to(reef_at) - reefward.z)
+	)
+	_check(
+		layout.in_cove(inside, bounds) and not layout.in_cove(mouth - outward * (sea.z + 1.0), bounds)
+			and holds > door * 0.5 + 24.0 and holds < won,
+		"it is a room: its middle holds a radius wider than a door lets out, and nothing a leader's size",
+		"holds %.0f (%.0f mass), lets out %.0f (%.0f mass), a leader %.0f"
+			% [holds, rules.mass_for(holds), door * 0.5, rules.mass_for(door * 0.5), won]
+	)
+
+	# --- Reach: just too big for a door ---------------------------------------
+
+	var open_sea := Vector2(fore[fore.size() - 1]["mouth"]) - across * 600.0
+	var outgrown := door * 0.5 + 16.0
+	var sweep := layout.reach(bounds, open_sea, outgrown)
+	var loose := 0
+	var cove_points := 0
+
+	for point: Vector2 in sweep["stranded"]:
+		if layout.in_cove(point, bounds):
+			cove_points += 1
+		else:
+			loose += 1
+
+	_check(
+		loose == 0 and cove_points > 0,
+		"one just too big for a door reaches everything but the cove",
+		"radius %.0f: %d of %d reached; %d stranded outside the cove, %d in it"
+			% [outgrown, sweep["reached"], sweep["free"], loose, cove_points]
+	)
+	_check(
+		layout.route_to(bounds, open_sea, inside, outgrown).is_empty()
+			and not layout.route_to(bounds, open_sea, inside, door * 0.5 - 16.0).is_empty(),
+		"so it has no route into the cove, and one just under a door has"
+	)
+
+	# --- Hunters: refused, as a harbour is --------------------------------------
+
+	var lurker := HungryHunters.largest_radius()
+	var region := layout.main_region(bounds, lurker)
+	var seeded := 0
+
+	for at in HungryHunters.spawn_points_for(layout, bounds):
+		if layout.in_cove(at, bounds):
+			seeded += 1
+
+	_check(
+		HungryLayout.in_region(region, bounds, inside)
+			and not HungryHunters.spawnable(layout, bounds, inside, region) and seeded == 0,
+		"a lurker fits its doors, and a hunter still may not appear inside it",
+		"lurker radius %.1f; %d seeded points inside" % [lurker, seeded]
+	)
+
+	# --- Driven: a starting monster in, a leader past -------------------------
+
+	world.spawn(1, open_sea)
+	_run_ticks(world, 2)
+
+	var monster := world.monster_for(1)
+
+	if not _check(monster != null and monster.alive, "a starting monster spawns in the sea in front of the open end"):
+		_drop(world)
+		_done()
+		return
+
+	var small := monster.pieces[0].radius()
+	var into := layout.route_to(bounds, monster.centre(), inside, small + 24.0)
+	var small_drive := _drive_route(world, monster, into, outward, TICK_RATE * 30)
+	_check(
+		into.size() >= 1 and small_drive["deepest"] > -2.0,
+		"driven along its route into the cove, it never overlaps a rock on any tick",
+		"%d waypoints, deepest %.1f into a face" % [into.size(), small_drive["deepest"]]
+	)
+	_check(
+		small_drive["reached"] == into.size() and layout.in_cove(monster.centre(), bounds),
+		"and stands inside it",
+		"%d of %d waypoints, at %s" % [small_drive["reached"], into.size(), str(monster.centre())]
+	)
+
+	# A leader from the bay behind the northern spit to the run-round's water: the one
+	# way between is between the cove and the spit, and it has to still be a way.
+	var spit_run := layout.spits[0] if Vector2(layout.blocks[layout.spits[0].x].x, layout.blocks[layout.spits[0].x].y).dot(outward) > 0.0 else layout.spits[1]
+	var spit_near := layout.blocks[spit_run.x]
+	var bay := Vector2(spit_near.x, spit_near.y) + outward * (spit_near.z + won + 60.0)
+	var beyond := reef_at + across * 400.0 - outward * 200.0
+	world.spawn(1, bay)
+	_run_ticks(world, 2)
+	monster = world.monster_for(1)
+	world.feed_player(1, leader_mass - monster.mass())
+	_run_ticks(world, 2)
+
+	# A 12-unit margin on a 12-unit grid: the water between the cove and the spit leaves a
+	# leader 70 to spare, and 24 either side on a 24-unit grid is a band a grid can miss.
+	var leader := monster.pieces[0].radius()
+	var past := layout.route_to(bounds, monster.centre(), beyond, leader + 12.0, 12.0)
+	var leader_drive := _drive_route(world, monster, past, across, TICK_RATE * 60)
+	_check(
+		monster.pieces.size() == 1 and leader > won - 2.0
+			and past.size() >= 1 and leader_drive["deepest"] > -2.0,
+		"a leader driven from the bay behind the spit past the cove never overlaps a rock",
+		"radius %.0f of %.0f in %d pieces, %d waypoints, deepest %.1f into a face"
+			% [leader, won, monster.pieces.size(), past.size(), leader_drive["deepest"]]
+	)
+	_check(
+		leader_drive["reached"] == past.size() and monster.centre().dot(across) > reef_at.dot(across) + reefward.z,
+		"and comes out on the reef side of the cove",
+		"%d of %d waypoints, at %s" % [leader_drive["reached"], past.size(), str(monster.centre())]
+	)
+	_check(
+		small_drive["covered"] > small_drive["length"] * 0.9
+			and leader_drive["covered"] > leader_drive["length"] * 0.9
+			and small_drive["pace"] > 0.95 and leader_drive["pace"] > 0.95,
+		"and both covered their routes at their ground speed",
+		"in %.0f of %.0f at %.2f of ground speed; past %.0f of %.0f at %.2f"
+			% [small_drive["covered"], small_drive["length"], small_drive["pace"],
+				leader_drive["covered"], leader_drive["length"], leader_drive["pace"]]
+	)
+
+	# --- Straight at the door between the posts -------------------------------
+
+	var from_sea := mouth - outward * 500.0
+	var to_wall := mouth + outward * 1000.0
+	var line := mouth.dot(outward)
+	var small_got := _straight_run(world, 1, from_sea, to_wall, 0.0)
+	_check(
+		small_got > line + sea.z,
+		"a starting monster driven straight at the door between the posts comes in",
+		"reached %.0f, the posts' line is %.0f" % [small_got, line]
+	)
+
+	var fed := rules.mass_for(door * 0.5) * 1.6
+	var big_got := _straight_run(world, 1, from_sea, to_wall, fed)
+	monster = world.monster_for(1)
+	# The reach that matters: how far its front gets toward a starting monster tucked
+	# against the wall at the back of the cove.
+	var tucked := mouth.dot(outward) + (wall - mouth.dot(outward)) - start
+	var short_by := tucked - start - (big_got + (monster.pieces[0].radius() if monster != null else 0.0))
+	_check(
+		big_got < line - sea.z and not layout.in_cove(monster.centre(), bounds),
+		"one of %.0f mass on the same line is held at it" % fed,
+		"reached %.0f, the posts' line is %.0f" % [big_got, line]
+	)
+	print("        held at %.0f with its front %.0f short of a starting monster at the back; the room holds %.0f, the doors let out %.0f"
+		% [big_got, short_by, holds, door * 0.5])
+	print("        waters round it: %.0f to the spit, %.0f to the fore reef, a leader %.0f across"
+		% [to_spit, to_reef, won * 2.0])
+	_check(
+		short_by > 0.0,
+		"and its front stops short of a starting monster at the back of the cove",
+		"%.0f short, a starting monster %.0f across" % [short_by, start * 2.0]
 	)
 
 	_drop(world)

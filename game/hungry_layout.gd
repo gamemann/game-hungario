@@ -48,8 +48,9 @@ const SLALOM := &"slalom"
 
 ## A barrier across the world whose channels widen from one end to the other, a second
 ## one behind it with one door, an atoll in the open sea in front of it whose gates widen
-## from the wall side to the reef side, and a spit from the sea wall either side of the
-## atoll. See [method _reef], [method _append_atoll] and [method _append_spits].
+## from the wall side to the reef side, a spit from the sea wall either side of the atoll,
+## and a cove against the open-end wall. See [method _reef], [method _append_atoll],
+## [method _append_spits] and [method _append_cove].
 const REEF := &"reef"
 
 
@@ -104,6 +105,10 @@ var chains: Array[Vector2i] = []
 ## something a monster goes through or round on the way to a barrier, not one of the
 ## barriers, so it has its own list and its own [method spit_gaps].
 var spits: Array[Vector2i] = []
+
+## Which runs of [member blocks] are the reef's cove, as `(first, count)`: two posts, sea
+## side first. See [method _append_cove] and [method in_cove].
+var coves: Array[Vector2i] = []
 
 
 static func none() -> HungryLayout:
@@ -539,6 +544,9 @@ static func _reef(bounds: Rect2) -> HungryLayout:
 	# [b]The spits, appended LAST[/b], so the atoll is still blocks 10-13 and still
 	# `rings[0]`. They are neither chains nor rings: see [member spits].
 	_append_spits(out, bounds)
+	# [b]The cove, appended after the spits[/b], so the spits are still blocks 14-17. It
+	# is its own list, [member coves]: two posts and a wall, not a barrier or a ring.
+	_append_cove(out, bounds)
 
 	return out
 
@@ -736,6 +744,98 @@ func spit_gaps(spit: int, bounds: Rect2) -> PackedFloat32Array:
 		out.append(Vector2(a.x, a.y).distance_to(Vector2(b.x, b.y)) - a.z - b.z)
 
 	return out
+
+
+## How far in front of the fore reef the cove stands, along the crossing axis, as a
+## fraction of the short half-extent: 1150 at `reef`'s size, the spits' own distance
+## turned onto the other axis.
+##
+## [b]Placed by the leader who goes past it.[/b] The cove stands against the open-end
+## wall between the northern spit and the fore reef's last rock, and both of those waters
+## have to stay wider than a leader or the cove is a wall across the bay: at 0.5 its
+## sea-side post stands straight over the spit's reef-end rock, 690 from it, and its
+## reef-side post is 760 from the fore reef's end rock, against a leader 620 across. At
+## 0.45 the reef-side water is 648, too close to a leader to call a lane; further out
+## both waters widen, and the cove moves away from the open end it is there for.
+const COVE_AT := 0.5
+
+## How big one cove post is, as a fraction of the short half-extent. 59.8 at `reef`'s
+## size.
+##
+## [b]The doors are the design number and the post is what is left[/b]: the doors are the
+## fore reef's tight channel, and the post decides how far the cove reaches off the wall
+## (door plus two radii: 368) and so how deep the refuge behind its posts is. At 0.026 a
+## starting monster at the back of the cove is out of reach of anybody pressed into a
+## door, and the cove stays out of both leader waters above.
+const COVE_RADIUS := 0.026
+
+
+## The reef's fifth part: a cove against the open-end wall, a refuge in the open sea.
+##
+## [b]At the tight end a small monster has the tight channel; at the open end it has
+## nothing its chaser does not have too.[/b] Every crossing in front of the fore reef's
+## open end — the wide channels, the run-round, the lane past the spits — admits the
+## monster chasing it, so a small monster caught on that side has had nowhere to go that
+## its chaser could not follow. The cove is two posts standing off the open-end wall with
+## THREE doors, each exactly the fore reef's tight channel (248, about 240 mass): the one
+## between the posts and one between each post and the wall. So the tight channel's tier
+## has a refuge at the other end of the map, and it is the reef's list once more rather
+## than a new number. Three doors for the harbours' reason — one door is a cork, and a
+## monster waiting outside one door is 368 from the next.
+##
+## [b]It encloses floor, so it is a refuge hunters must be refused[/b], as a harbour is:
+## [method in_cove] is what [method HungryHunters.spawnable] asks. The pocket behind the
+## posts holds a radius of 154 at its middle (about 370 mass) and lets out 124 (about
+## 240), so a monster that eats past the door's limit inside has to split or eject to
+## leave — the den's price and the harbours', in the sea.
+static func _append_cove(layout: HungryLayout, bounds: Rect2) -> void:
+	var chain_along_x := bounds.size.x < bounds.size.y
+	var short_half := minf(bounds.size.x, bounds.size.y) * 0.5
+	var centre := bounds.get_center()
+	var along := Vector2(1.0, 0.0) if chain_along_x else Vector2(0.0, 1.0)
+	var toward_reef := Vector2(0.0, 1.0) if chain_along_x else Vector2(1.0, 0.0)
+	# The open end is the chain's HIGH end: `_reef_chain` lays the channels out tight
+	# first from the low end, so the wall the cove stands on is the one past the widest.
+	var wall_half := (bounds.size.x if chain_along_x else bounds.size.y) * 0.5
+	var door := cove_door(short_half)
+	var radius := short_half * COVE_RADIUS
+	var middle := centre - toward_reef * short_half * COVE_AT \
+		+ along * (wall_half - door - radius)
+	var first := layout.blocks.size()
+
+	# Sea side first, then reef side.
+	for side in [-1.0, 1.0]:
+		var at: Vector2 = middle + toward_reef * (side * (door * 0.5 + radius))
+		layout.blocks.append(Vector3(at.x, at.y, radius))
+
+	layout.coves.append(Vector2i(first, 2))
+
+
+## The width of every cove door: the fore reef's tight channel.
+static func cove_door(short_half: float) -> float:
+	return channel_widths(short_half)[0]
+
+
+## Whether [param at] is inside the cove: past the posts' front faces toward the wall,
+## and between their outer faces along it. Only the reef has a cove.
+##
+## Past the FRONT face counts, as `harbour_of` counts past a fence's: a point between the
+## two posts is past the line a monster outgrows.
+func in_cove(at: Vector2, bounds: Rect2) -> bool:
+	if id != REEF or coves.is_empty():
+		return false
+
+	var chain_along_x := bounds.size.x < bounds.size.y
+	var along := Vector2(1.0, 0.0) if chain_along_x else Vector2(0.0, 1.0)
+	var run := coves[0]
+	var a := blocks[run.x]
+	var b := blocks[run.x + 1]
+	var line := Vector2(a.x, a.y).dot(along) - a.z
+	var low := minf(a.x, b.x) - a.z if not chain_along_x else minf(a.y, b.y) - a.z
+	var high := maxf(a.x, b.x) + a.z if not chain_along_x else maxf(a.y, b.y) + a.z
+	var sideways := at.x if not chain_along_x else at.y
+
+	return at.dot(along) > line and sideways > low and sideways < high
 
 
 ## One barrier of rocks [param behind] units along the crossing axis from the world's

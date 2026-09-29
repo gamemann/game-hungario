@@ -250,17 +250,18 @@ static func reef() -> HungryPreset:
 	# 1,100 over 5,200 squared, 40.7 per million square units. The field REFILLS what
 	# `HungryWorld._cull_blocked` takes out of a rock — a culled slot is a missing slot
 	# and the scatter tops back up to the target — so the target is the number standing
-	# on the floor, and the floor is the rectangle less eighteen rocks: 20.08 million
-	# square units, 5.1% under rock (4.4% before the atoll's four small ones, 4.6% before
-	# the spits' four). 817 is Classic's density on that; it was 820 until the spits,
-	# which moved the floor by 0.5%.
+	# on the floor, and the floor is the rectangle less twenty rocks: 20.06 million
+	# square units, 5.2% under rock (4.4% before the atoll's four small ones, 4.6% before
+	# the spits' four, 5.1% before the cove's two posts). 816 is Classic's density on
+	# that; it was 820 until the spits, which moved the floor by 0.5%, and 817 until the
+	# cove, which moved it by 0.1%.
 	#
 	# It was 880 with one barrier, argued the other way round — as if the cull were a
 	# permanent loss the target had to be raised to cover — which made the reef 4.5%
 	# richer than the square it claimed to match. The suite measures the food that is
 	# actually alive now rather than repeating the arithmetic; see `headless_round`'s
 	# "food on the floor that is left".
-	preset.food_target = 817
+	preset.food_target = 816
 
 	# [b]Above density, like Warrens and for a sharper version of its reason.[/b] A
 	# pepper splits somebody into halves that fit a channel they did not fit before, so
