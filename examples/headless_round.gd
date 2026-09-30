@@ -38,7 +38,7 @@ const HungryWorld := preload("../game/hungry_world.gd")
 const SEED := 20260828
 const TICK_RATE := 60
 
-const CHECKS := 403
+const CHECKS := 422
 
 var _passed := 0
 var _failed := 0
@@ -97,6 +97,7 @@ func _run() -> void:
 	_test_the_atoll()
 	_test_the_spits()
 	_test_the_cove()
+	_test_the_shallows()
 	_test_the_den()
 	_test_the_harbours()
 	_test_hunter_round_a_rock()
@@ -3422,6 +3423,290 @@ func _test_the_cove() -> void:
 	_done()
 
 
+## The shallows: five lines of posts whose gaps widen toward the open water, so how far in
+## a monster can go is a function of its size.
+##
+## [b]Asked at the sizes each line is FOR, and driven rather than compared.[/b] Every
+## arithmetic check over the lines would pass on lines built in the wrong order, or so
+## close together that a band is a slot: so the gaps are measured off the discs against
+## the description, the water between every two lines against the gap that lets you in,
+## the floor swept at just over each line's limit, and then three monsters are driven — a
+## starting one along a route to the shallow wall, a middling one to the band its size
+## allows, and a leader straight in until its tree line holds it.
+func _test_the_shallows() -> void:
+	_section("the shallows")
+
+	var preset := HungryPreset.shallows()
+	var leader_mass := preset.win_mass
+	# Lifted for the cove's reason: the fed monsters below eat on their way, and a round
+	# won mid-drive resets the world under them.
+	preset.win_mass = 1000000.0
+	var world := _make_world(preset, SEED + 263)
+	world.add_player(1, "Sha")
+	_settle(world)
+
+	var bounds := world.arena.bounds
+	var layout := world.layout
+	var rules := world.tunables.mass_rules
+	var lines := HungryLayout.SHALLOWS_LINES
+
+	if not _check(
+		layout != null and layout.id == HungryLayout.SHALLOWS and layout.chains.size() == lines
+			and layout.rings.is_empty() and bounds.size.x >= bounds.size.y,
+		"the shallows are five lines of posts across a world wider than it is deep",
+		"%d lines" % (layout.chains.size() if layout != null else -1)
+	):
+		_drop(world)
+		_done()
+		return
+
+	var short_half := minf(bounds.size.x, bounds.size.y) * 0.5
+	var widths := HungryLayout.shallows_widths(short_half)
+	var won := rules.radius_for(leader_mass)
+	var start := rules.radius_for(HungryContent.START_MASS)
+	var line_x := PackedFloat32Array()
+	var post_r := PackedFloat32Array()
+
+	# --- The lines, measured off the discs ------------------------------------
+
+	var wrong := PackedStringArray()
+
+	for line in range(lines):
+		var run := layout.chains[line]
+		var first := layout.blocks[run.x]
+		var last := layout.blocks[run.x + run.y - 1]
+		var gaps := PackedFloat32Array([first.y - first.z - bounds.position.y])
+
+		for channel in layout.channels(line):
+			gaps.append(float(channel["width"]))
+
+		gaps.append(bounds.end.y - last.y - last.z)
+
+		for index in range(run.x, run.x + run.y):
+			if absf(layout.blocks[index].x - first.x) > 0.01:
+				wrong.append("line %d is not straight" % line)
+
+		for gap in gaps:
+			if absf(gap - widths[line]) > 0.5:
+				wrong.append("line %d: %.1f against %.1f" % [line, gap, widths[line]])
+
+		line_x.append(first.x)
+		post_r.append(first.z)
+
+	_check(
+		wrong.is_empty(),
+		"every gap of every line, walls included, measured off the discs, is its line's width",
+		"%s; widths %s" % [", ".join(wrong.slice(0, 3)), _widths(widths)]
+	)
+
+	var ordered := true
+
+	for line in range(1, lines):
+		ordered = ordered and widths[line] > widths[line - 1] and line_x[line] > line_x[line - 1]
+
+	_check(
+		ordered and absf(widths[0] - HungryLayout.channel_widths(short_half)[0]) < 0.5
+			and widths[lines - 2] < won * 2.0 and widths[lines - 1] > won * 2.0 + 40.0,
+		"they widen line by line from the shallow wall, the tightest is the reef's tight channel, and a leader fits only the last",
+		"%s at x %s; a leader %.0f across" % [_widths(widths), _widths(line_x), won * 2.0]
+	)
+
+	# --- The bands: never narrower than the gap that lets you in ----------------
+
+	var waters := PackedFloat32Array()
+	var slots := PackedStringArray()
+
+	for line in range(lines):
+		var water := line_x[line] - post_r[line] - bounds.position.x
+
+		if line > 0:
+			water = INF
+			var inner := layout.chains[line - 1]
+			var outer := layout.chains[line]
+
+			for a in range(inner.x, inner.x + inner.y):
+				for b in range(outer.x, outer.x + outer.y):
+					var pa := layout.blocks[a]
+					var pb := layout.blocks[b]
+					water = minf(water, Vector2(pa.x, pa.y).distance_to(Vector2(pb.x, pb.y)) - pa.z - pb.z)
+
+		waters.append(water)
+
+		if water < widths[line] + 1.0:
+			slots.append("band %d: %.0f against a gap of %.0f" % [line, water, widths[line]])
+
+	_check(
+		slots.is_empty() and waters[0] * 0.5 > widths[0] * 0.5 + 16.0,
+		"no band is narrower than the gap into it, and the deepest holds more than its line lets out",
+		"waters %s against gaps %s%s" % [_widths(waters), _widths(widths), "" if slots.is_empty() else "; " + ", ".join(slots)]
+	)
+
+	# --- Reach: the floor recedes one band per line as a monster grows ----------
+
+	var open_water := Vector2(bounds.end.x - won - 30.0, bounds.get_center().y)
+	var all := layout.reach(bounds, open_water, widths[0] * 0.5 - 16.0)
+	_check(
+		all["reached"] == all["free"],
+		"one just under the tightest line reaches all of the floor",
+		"%d of %d" % [all["reached"], all["free"]]
+	)
+
+	var tiers := PackedStringArray()
+	var leaks := PackedStringArray()
+	var last_stranded := 0
+
+	for line in range(lines):
+		var over := widths[line] * 0.5 + 16.0
+		# From the open wall at this size: just over the last line is wider than a leader,
+		# and the leader's own start would be inside the wall for it.
+		var sweep := layout.reach(bounds, Vector2(bounds.end.x - over - 30.0, open_water.y), over)
+		var stranded: PackedVector2Array = sweep["stranded"]
+		var outside := 0
+
+		for point: Vector2 in stranded:
+			if layout.shallows_band(point, bounds) > line:
+				outside += 1
+
+		tiers.append("%.0f mass: %d of %d" % [rules.mass_for(over), sweep["reached"], sweep["free"]])
+
+		if outside > 0 or stranded.size() <= last_stranded:
+			leaks.append("line %d: %d stranded in front of it, %d in all" % [line, outside, stranded.size()])
+
+		last_stranded = stranded.size()
+
+	print("        reached from the open water just over each line: %s" % ", ".join(tiers))
+	_check(
+		leaks.is_empty(),
+		"just over each line's limit, a monster reaches everything in front of that line and loses more floor at every line",
+		", ".join(leaks)
+	)
+
+	# --- Hunters: the deepest band is refused them ------------------------------
+
+	var lurker := HungryHunters.largest_radius()
+	var region := layout.main_region(bounds, lurker)
+	var deep := Vector2(bounds.position.x + waters[0] * 0.5, bounds.get_center().y)
+	var seeded := 0
+	var elsewhere := 0
+
+	for at in HungryHunters.spawn_points_for(layout, bounds):
+		if layout.shallows_band(at, bounds) == 0:
+			seeded += 1
+		else:
+			elsewhere += 1
+
+	_check(
+		layout.shallows_band(deep, bounds) == 0 and HungryLayout.in_region(region, bounds, deep)
+			and not HungryHunters.spawnable(layout, bounds, deep, region)
+			and seeded == 0 and elsewhere >= 12,
+		"a lurker fits every line, and a hunter may not appear behind the tightest",
+		"lurker radius %.1f; %d seeded points behind it, %d elsewhere" % [lurker, seeded, elsewhere]
+	)
+
+	# --- Driven: a starting monster to the shallow wall -------------------------
+
+	world.spawn(1, open_water)
+	_run_ticks(world, 2)
+
+	var monster := world.monster_for(1)
+
+	if not _check(monster != null and monster.alive, "a starting monster spawns in the open water"):
+		_drop(world)
+		_done()
+		return
+
+	var small := monster.pieces[0].radius()
+	# Planned 48 wide rather than 24: the route crosses five lines in three legs, each
+	# threading gaps on the slant, and a waypoint counts as reached 40 units short of it.
+	var into := layout.route_to(bounds, monster.centre(), deep, small + 48.0, 12.0)
+	var small_drive := _drive_route(world, monster, into, Vector2.LEFT, TICK_RATE * 60)
+	_check(
+		into.size() >= 1 and small_drive["deepest"] > -2.0
+			and small_drive["reached"] == into.size() and layout.shallows_band(monster.centre(), bounds) == 0,
+		"driven along its route through all five lines, it never overlaps a post and stands against the shallow wall",
+		"radius %.0f, %d of %d waypoints, deepest %.1f into a face, band %d"
+			% [monster.pieces[0].radius(), small_drive["reached"], into.size(), small_drive["deepest"],
+				layout.shallows_band(monster.centre(), bounds)]
+	)
+
+	# --- A middling monster: as far as its size allows -------------------------
+
+	# Just over the second line's limit rather than halfway to the third's: halfway leaves
+	# 28 units a side in the third line's gaps, less than the 40 short of a waypoint that
+	# counts as reaching it, and a route pulled tight past a post then clips it.
+	var middling := widths[1] * 0.5 + 6.0
+	var band_two := Vector2((line_x[1] + post_r[1] + line_x[2] - post_r[2]) * 0.5, bounds.get_center().y)
+	# From the leader's band, not the open water: a monster this size eats what it sweeps
+	# on the way, and from the open wall it grew 36 units of radius — past the margin its
+	# route was planned with — before it reached the band it was sent to.
+	var band_four := Vector2(
+		(line_x[lines - 2] + post_r[lines - 2] + line_x[lines - 1] - post_r[lines - 1]) * 0.5,
+		bounds.get_center().y
+	)
+	world.spawn(1, band_four)
+	_run_ticks(world, 2)
+	monster = world.monster_for(1)
+	world.feed_player(1, rules.mass_for(middling) - monster.mass())
+	_run_ticks(world, 2)
+
+	var mid := monster.pieces[0].radius()
+	var mid_route := layout.route_to(bounds, monster.centre(), band_two, mid + 36.0, 12.0)
+	var mid_drive := _drive_route(world, monster, mid_route, Vector2.LEFT, TICK_RATE * 60)
+	_check(
+		monster.pieces.size() == 1 and mid > widths[1] * 0.5 and mid < widths[2] * 0.5
+			and mid_route.size() >= 1 and mid_drive["deepest"] > -2.0
+			and mid_drive["reached"] == mid_route.size() and layout.shallows_band(monster.centre(), bounds) == 2,
+		"one of %.0f mass, driven in from the leader's band, gets through two more lines to the band between the second and the third" % rules.mass_for(middling),
+		"radius %.0f, %.0f on arrival, in %d pieces, %d of %d waypoints, deepest %.1f, band %d"
+			% [mid, monster.pieces[0].radius(), monster.pieces.size(), mid_drive["reached"], mid_route.size(), mid_drive["deepest"],
+				layout.shallows_band(monster.centre(), bounds)]
+	)
+	_check(
+		small_drive["covered"] > small_drive["length"] * 0.9 and mid_drive["covered"] > mid_drive["length"] * 0.9
+			and small_drive["pace"] > 0.95 and mid_drive["pace"] > 0.95,
+		"and both covered their routes at their ground speed",
+		"in %.0f of %.0f at %.2f of ground speed; to the band %.0f of %.0f at %.2f"
+			% [small_drive["covered"], small_drive["length"], small_drive["pace"],
+				mid_drive["covered"], mid_drive["length"], mid_drive["pace"]]
+	)
+
+	# Straight on from where it stands: the second line holds it.
+	var from_band := monster.centre()
+	var mid_mass := monster.mass()
+	var mid_got := _straight_run(world, 1, from_band, Vector2(bounds.position.x, from_band.y), mid_mass)
+	monster = world.monster_for(1)
+	_check(
+		monster != null and -mid_got > line_x[1] + post_r[1] - 1.0
+			and layout.shallows_band(monster.centre(), bounds) == 2,
+		"driven straight at the second line from there, it is held in front of it",
+		"its furthest west %.0f, the second line's face %.0f" % [-mid_got, line_x[1] + post_r[1]]
+	)
+
+	# --- The leader: through the last line and held at its tree line ------------
+
+	var gap_mouth: Vector2 = layout.channels(lines - 1)[2]["mouth"]
+	var leader_from := Vector2(open_water.x, gap_mouth.y)
+	var leader_got := _straight_run(
+		world, 1, leader_from, Vector2(bounds.position.x, gap_mouth.y), leader_mass
+	)
+	monster = world.monster_for(1)
+	var leader_band := layout.shallows_band(monster.centre(), bounds) if monster != null else -1
+	_check(
+		monster != null and monster.pieces.size() == 1 and monster.pieces[0].radius() > won - 2.0
+			and -leader_got < line_x[lines - 1] - post_r[lines - 1]
+			and -leader_got > line_x[lines - 2] + post_r[lines - 2] and leader_band == lines - 1,
+		"a leader driven straight in goes through the last line and is held at the one inside it",
+		"furthest west %.0f: the last line at %.0f, its tree line's face at %.0f; band %d"
+			% [-leader_got, line_x[lines - 1], line_x[lines - 2] + post_r[lines - 2], leader_band]
+	)
+	print("        the leader's floor starts %.0f in from the open wall, %.0f%% of the width"
+		% [bounds.end.x - (line_x[lines - 2] + post_r[lines - 2]),
+			(bounds.end.x - (line_x[lines - 2] + post_r[lines - 2])) / bounds.size.x * 100.0])
+
+	_drop(world)
+	_done()
+
+
 ## Drives [param monster] along [param route] at full reach, measuring what the level
 ## sections measure: how deep any piece went into any rock, how many waypoints it reached,
 ## how far it got along [param axis], and what it covered against the route's length and
@@ -4049,7 +4334,7 @@ func _test_where_a_hunter_appears() -> void:
 
 	var radius := HungryHunters.largest_radius()
 
-	for mode: StringName in [&"classic", &"frenzy", &"gauntlet", &"warrens", &"reef"]:
+	for mode: StringName in [&"classic", &"frenzy", &"gauntlet", &"warrens", &"reef", &"shallows"]:
 		var preset := HungryPreset.for_id(mode)
 		var bounds := Rect2(-preset.world_size * 0.5, preset.world_size)
 		var layout := HungryLayout.for_id(preset.layout, bounds)
@@ -4300,7 +4585,7 @@ func _drop_hunters(hunters: Node) -> void:
 func _test_the_reach() -> void:
 	_section("the reach of every level")
 
-	var modes: Array[StringName] = [&"classic", &"frenzy", &"gauntlet", &"warrens", &"reef"]
+	var modes: Array[StringName] = [&"classic", &"frenzy", &"gauntlet", &"warrens", &"reef", &"shallows"]
 	var covered := {}
 
 	for mode in modes:
@@ -4324,6 +4609,12 @@ func _test_the_reach() -> void:
 		var start := rules.radius_for(HungryContent.START_MASS)
 		var won := rules.radius_for(preset.win_mass)
 		var wall := Vector2(bounds.position.x + won + 30.0, bounds.get_center().y)
+
+		# The shallows' west wall is the SHALLOW one, behind five lines a leader cannot
+		# cross, so a fill from there measures a band rather than the floor. From the
+		# open wall instead.
+		if preset.layout == HungryLayout.SHALLOWS:
+			wall.x = bounds.end.x - won - 30.0
 
 		# [b]Off the wall until a leader can stand there.[/b] The gauntlet's west end is a
 		# harbour now, and this point is behind its middle post — inside the post for a
@@ -4392,6 +4683,21 @@ func _test_the_reach() -> void:
 			print("        %s: the lane is quartered past %.0f mass; %d of %d stranded at the winning radius" % [
 				mode, lane_admits, stranded_big.size(), big["free"]
 			])
+		elif preset.layout == HungryLayout.SHALLOWS:
+			# [b]The design, not a finding.[/b] A leader is shut out of every band behind
+			# its tree line — the fourth line, whose 580 it does not fit — and of nothing
+			# else. What it may not lose is floor in FRONT of that line.
+			var in_front := 0
+
+			for point: Vector2 in stranded_big:
+				if layout.shallows_band(point, bounds) >= HungryLayout.SHALLOWS_LINES - 1:
+					in_front += 1
+
+			_check(
+				in_front == 0 and not stranded_big.is_empty(),
+				"%s: a leader reaches everything in front of its tree line and nothing behind it" % mode,
+				"%s; %d stranded in front of the line" % [big_note, in_front]
+			)
 		else:
 			# The gauntlet's harbours do not show here, and that is measured rather than
 			# missed: 296 deep behind the posts, they have no point a leader 480 across can
@@ -4459,6 +4765,7 @@ func _test_food_on_the_floor() -> void:
 		&"gauntlet": HungryPreset.frenzy(),
 		&"warrens": HungryPreset.classic(),
 		&"reef": HungryPreset.classic(),
+		&"shallows": HungryPreset.classic(),
 	}
 
 	# Every layout is somebody's, so a sixth mode with rocks in it cannot arrive without

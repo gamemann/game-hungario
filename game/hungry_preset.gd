@@ -284,6 +284,41 @@ static func reef() -> HungryPreset:
 	return preset
 
 
+## Lines of posts across the world whose gaps widen from the west wall to the open water:
+## the further in a monster wants to go, the smaller it has to be. See
+## [method HungryLayout._shallows].
+##
+## [b]Reef's world and reef's pace[/b], because it is the reef's list of gate widths
+## spread over the whole map rather than along one barrier, and the two should be
+## compared at the same size: 4600 square, a winning mass of 1500 (620 across, which is
+## between the fourth line's 580 and the fifth's 690 — the leader's tree line is the
+## fourth), and the same crossing tax on a split.
+static func shallows() -> HungryPreset:
+	var preset := HungryPreset.new()
+	preset.id = &"shallows"
+	preset.display_name = "Shallows"
+	preset.layout = HungryLayout.SHALLOWS
+	preset.world_size = Vector2(4600.0, 4600.0)
+
+	# [b]Classic's density over the floor that is actually left[/b] (see the reef's
+	# note: the field refills what the cull takes, so the target is what stands on the
+	# floor). Thirty-eight posts cover 0.43 million of 21.16 million square units, 2.0%;
+	# Classic's 40.7 per million on the 20.73 left is 843.
+	preset.food_target = 843
+
+	# The reef's reason, once per line: a pepper splits somebody into halves that fit a
+	# line they did not fit before, so a throwable here is a way further in, for them
+	# or for the monster that threw it.
+	preset.fruit_target = 15
+	preset.item_target = 26
+
+	preset.win_mass = 1500.0
+	preset.max_speed = 445.0
+	preset.merge_delay_sec = 12.0
+	preset.time_limit_sec = 420.0
+	return preset
+
+
 static func for_id(preset_id: StringName) -> HungryPreset:
 	match preset_id:
 		&"frenzy":
@@ -294,6 +329,8 @@ static func for_id(preset_id: StringName) -> HungryPreset:
 			return warrens()
 		&"reef":
 			return reef()
+		&"shallows":
+			return shallows()
 		_:
 			return classic()
 

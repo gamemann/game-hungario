@@ -53,6 +53,11 @@ const SLALOM := &"slalom"
 ## [method _append_spits] and [method _append_cove].
 const REEF := &"reef"
 
+## Five lines of posts across the world whose gaps widen from one wall to the other, so
+## the further from the open water a monster wants to go the smaller it has to be. See
+## [method _shallows].
+const SHALLOWS := &"shallows"
+
 
 ## Every layout that is a level, so a check can ask all of them the same question.
 ##
@@ -64,7 +69,7 @@ const REEF := &"reef"
 ## with its gates measured against a WALL rather than against another rock, a case the
 ## question as originally asked cannot even see. See [method narrowest_gate].
 static func ids() -> Array[StringName]:
-	return [WARRENS, SLALOM, REEF]
+	return [WARRENS, SLALOM, REEF, SHALLOWS]
 
 
 ## What is solid, as `(x, y, radius)` in world units.
@@ -129,6 +134,8 @@ static func for_id(layout_id: StringName, bounds: Rect2) -> HungryLayout:
 			return _slalom(bounds)
 		REEF:
 			return _reef(bounds)
+		SHALLOWS:
+			return _shallows(bounds)
 		_:
 			return none()
 
@@ -836,6 +843,155 @@ func in_cove(at: Vector2, bounds: Rect2) -> bool:
 	var sideways := at.x if not chain_along_x else at.y
 
 	return at.dot(along) > line and sideways > low and sideways < high
+
+
+# --- shallows ---------------------------------------------------------------
+
+## How many lines of posts stand across the world. Five, so the range from a starting
+## monster to the mass that ends the round is cut into six bands, one more than a line
+## is wide for each tier of the other levels' gates.
+const SHALLOWS_LINES := 5
+
+## The tightest line's gap, as a fraction of the short half-extent: the reef's tight
+## channel, 248 units at `shallows`' size, a radius of 124 and about 240 mass.
+const SHALLOWS_TIGHT := 0.108
+
+## The most open line's gap, same fraction: 690 units, a radius of 345 and about 1860
+## mass. Past the mass that ends the round, so the outermost line is a thing a leader
+## goes THROUGH and dodges round, never a wall; the line inside it (580, about 1310
+## mass) is the leader's tree line.
+const SHALLOWS_OPEN := 0.3
+
+## How big a post is meant to be, same fraction: 69 units. A line is laid out from its
+## gap and this, and then the post radius is whatever makes the line meet both walls
+## with every gap exactly its width — the gaps are the design and the posts are what is
+## left, which is the harbours' rule.
+const SHALLOWS_POST := 0.03
+
+## How much clear water stands between two lines, as a multiple of the OUTER line's gap.
+##
+## [b]A band has to be a place, not a slot.[/b] Everybody who fits the outer line and not
+## the inner one lives in that band, and at 1.0 the biggest of them could only just slide
+## along it where two posts face each other. 1.2 gives the biggest monster a band holds
+## room to turn in, and it is also what keeps a band from being a hidden gate: the
+## narrowest water between two lines is wider than the gap that lets you into it. The
+## deepest band, between the tightest line and the wall, is the same multiple of the
+## tightest gap: a room that holds a radius of 149 (about 350 mass) behind a line that
+## lets out 124, so a monster that eats past the limit in there has to split to leave.
+const SHALLOWS_BAND := 1.2
+
+
+## Lines of posts across the world whose gaps widen toward the open water.
+##
+## [b]Every other level asks a question with a place in it.[/b] The warrens ask whether
+## you fit the middle; the slalom which lane past each rock; the reef where along it you
+## can cross. A monster learns its answer and then knows where to go. Here the question
+## is [i]how far in[/i], and the answer moves under you as you eat: five lines of posts,
+## each a fence you cross anywhere along its length — 248, 359, 469, 580 and 690 units
+## wide at this mode's size, tight at the wall — so the floor a monster can reach is a
+## band that recedes from the shallow wall as it grows. A starting monster has the whole
+## map; one at the winning mass has the open water and the band inside the last line,
+## 47% of the width.
+##
+## [b]So the chase has a direction.[/b] Anybody being chased runs for the shallows, the
+## chaser follows until its own tree line and stops there, and the food behind the lines
+## is eaten by the monsters small enough to reach it. It is the warrens' catch-up
+## mechanic laid out as a gradient rather than a ring: not a middle one tier is shut out
+## of, but a line for every tier, and every monster standing just outside the one it has
+## outgrown.
+##
+## [b]A line is a fence you cross anywhere, not a channel you walk to.[/b] Every gap in a
+## line is the same width and the walls are gaps too, so crossing costs no journey and
+## the reef's question never comes up; the band behind is the prize. The water between two
+## lines is [constant SHALLOWS_BAND] times the outer line's gap, so a band is never
+## narrower than the gap that lets you into it.
+##
+## Stacked along the LONG axis with each line across the short one, so in a corridor the
+## shallows would be one end of it; at this mode's square the west wall is the shallow
+## one. The lines are [member chains], laid out tight line first, each from the short
+## axis's low wall.
+static func _shallows(bounds: Rect2) -> HungryLayout:
+	var out := HungryLayout.new()
+	out.id = SHALLOWS
+
+	var along_x := bounds.size.x >= bounds.size.y
+	var short_half := minf(bounds.size.x, bounds.size.y) * 0.5
+	var low := bounds.position.x if along_x else bounds.position.y
+	var across_low := bounds.position.y if along_x else bounds.position.x
+	var widths := shallows_widths(short_half)
+	var previous := 0.0
+	var at := low
+
+	for line in range(widths.size()):
+		var gap := widths[line]
+		var radius := shallows_post_radius(short_half, gap)
+		var posts := shallows_posts(short_half, gap)
+		# The water on this line's shallow side is sized by THIS line's gap: it is the band
+		# a monster that just came through the gap stands in. For the tightest line it is
+		# the water against the shallow wall.
+		at += gap * SHALLOWS_BAND + previous + radius
+		var run := PackedVector3Array()
+
+		for post in range(posts):
+			var across := across_low + gap * float(post + 1) + radius * float(post * 2 + 1)
+			run.append(
+				Vector3(at, across, radius) if along_x else Vector3(across, at, radius)
+			)
+
+		_append_chain(out, run)
+		previous = radius
+
+	return out
+
+
+## Every line's gap, tightest (nearest the shallow wall) first, in world units: evenly
+## spaced from [constant SHALLOWS_TIGHT] to [constant SHALLOWS_OPEN]. Public because the
+## level IS this list; `headless_round` measures the built lines against it.
+static func shallows_widths(short_half: float) -> PackedFloat32Array:
+	var out := PackedFloat32Array()
+
+	for line in range(SHALLOWS_LINES):
+		out.append(short_half * lerpf(
+			SHALLOWS_TIGHT, SHALLOWS_OPEN, float(line) / float(SHALLOWS_LINES - 1)
+		))
+
+	return out
+
+
+## How many posts a line of [param gap] has: as many as come closest to posts of
+## [constant SHALLOWS_POST] with every gap, walls included, exactly [param gap].
+static func shallows_posts(short_half: float, gap: float) -> int:
+	var span := short_half * 2.0
+	return maxi(1, roundi((span - gap) / (gap + short_half * SHALLOWS_POST * 2.0)))
+
+
+## The radius of one post in a line of [param gap]: what is left of the span once its
+## gaps are taken out, shared between its posts. Derived, like a harbour post.
+static func shallows_post_radius(short_half: float, gap: float) -> float:
+	var posts := shallows_posts(short_half, gap)
+	return (short_half * 2.0 - gap * float(posts + 1)) / float(posts * 2)
+
+
+## Which band [param at] stands in: 0 behind the tightest line (between it and the
+## shallow wall), [constant SHALLOWS_LINES] in the open water past the last. "Behind" a
+## line is past its posts' back faces, so a point between two posts is still in front
+## of it — the opposite of a harbour's rule, because here the band behind is the room
+## and the gap is the way in. -1 for anything but the shallows.
+func shallows_band(at: Vector2, bounds: Rect2) -> int:
+	if id != SHALLOWS:
+		return -1
+
+	var along_x := bounds.size.x >= bounds.size.y
+	var here := at.x if along_x else at.y
+
+	for line in range(chains.size()):
+		var post := blocks[chains[line].x]
+		var line_at := post.x if along_x else post.y
+
+		if here < line_at - post.z:
+			return line
+
+	return chains.size()
 
 
 ## One barrier of rocks [param behind] units along the crossing axis from the world's

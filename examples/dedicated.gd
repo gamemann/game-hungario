@@ -39,7 +39,7 @@ const SERVER_DIR := "user://hungry_dedicated"
 ## prints it to say which game this is, and nothing treats it as proof.
 const APP_URL := "hungario"
 
-const CHECKS := 205
+const CHECKS := 208
 
 var _passed := 0
 var _failed := 0
@@ -855,6 +855,43 @@ func _test_game_change() -> void:
 		after != null and after.field.food_count() > 0,
 		"the new world has its own field (%d)"
 			% (after.field.food_count() if after != null else 0)
+	)
+
+	# [b]The newest mode, reached the way an operator reaches it[/b]: `changelevel` at the
+	# console, which is the path a map nobody can reach would fail on. Then back to
+	# frenzy, so everything after this section runs on the world it always has.
+	var frenzy_id := _world().get_instance_id()
+	_server.console.execute("changelevel %s" % HungryModule.GAME_SHALLOWS)
+	var to_shallows := await _until(func() -> bool:
+		var now := _world()
+		return now != null and now.get_instance_id() != frenzy_id and now.layout != null \
+			and now.layout.count() > 0
+	)
+	var shallows := _world()
+	_check(
+		to_shallows and String(shallows.preset.id) == "shallows"
+			and shallows.layout.id == HungryLayout.SHALLOWS
+			and shallows.layout.chains.size() == HungryLayout.SHALLOWS_LINES,
+		"`changelevel %s` reaches the shallows, five lines of posts" % HungryModule.GAME_SHALLOWS,
+		"%s, %d posts" % [
+			String(shallows.preset.id) if shallows != null else "no world",
+			shallows.layout.count() if shallows != null and shallows.layout != null else -1
+		]
+	)
+	_check(
+		_module().world == shallows and _module().bridge.world == shallows,
+		"and the module and the bridge rebound onto it"
+	)
+
+	var shallows_id := shallows.get_instance_id() if shallows != null else 0
+	var back: DotResult = await _server.games.change_game(HungryModule.GAME_FRENZY, "test")
+	var returned := await _until(func() -> bool:
+		var now := _world()
+		return now != null and now.get_instance_id() != shallows_id
+	)
+	_check(
+		back.ok and returned and String(_world().preset.id) == "frenzy",
+		"and back to frenzy for the rest of the suite"
 	)
 
 
