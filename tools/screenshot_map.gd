@@ -262,6 +262,19 @@ func _process(_delta: float) -> bool:
 
 		_world.tick({})
 
+		# A fed monster grows by hundreds of mass in one call, and a tick pushes it out of
+		# the rocks BEFORE it eats — so on the tick after the feed it swallows the food its
+		# new disc now covers, grows again, and is drawn overlapping a post by exactly that
+		# growth (`[hungario-grown-1]`: 12.7 units in shallows_grown, 825 -> 919 mass). The
+		# game pushes it out on the next tick; the frame was simply taken first. So tick on
+		# until the player stands clear, as it would one tick later in any real round.
+		if float(shot["mass"]) > 0.0:
+			for _settle in range(30):
+				if not _player_overlaps():
+					break
+
+				_world.tick({})
+
 	_wait -= 1
 
 	if _wait > 0:
@@ -275,6 +288,20 @@ func _process(_delta: float) -> bool:
 
 	_at += 1
 	_wait = SETTLE
+	return false
+
+
+## Whether any of the player's pieces overlaps the level by more than half a unit.
+func _player_overlaps() -> bool:
+	var monster := _world.monster_for(1)
+
+	if monster == null or _world.layout == null:
+		return false
+
+	for piece in monster.pieces:
+		if _world.layout.blocked(piece.position(), piece.radius() - 0.5):
+			return true
+
 	return false
 
 
