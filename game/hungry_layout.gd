@@ -115,6 +115,10 @@ var spits: Array[Vector2i] = []
 ## side first. See [method _append_cove] and [method in_cove].
 var coves: Array[Vector2i] = []
 
+## The shallows' rock pools, as `(first, count)`: one post each, standing off a corner of
+## the open water. See [method _append_pools] and [method in_pool].
+var pools: Array[Vector2i] = []
+
 
 static func none() -> HungryLayout:
 	return HungryLayout.new()
@@ -941,6 +945,7 @@ static func _shallows(bounds: Rect2) -> HungryLayout:
 		_append_chain(out, run)
 		previous = radius
 
+	_append_pools(out, bounds)
 	return out
 
 
@@ -992,6 +997,87 @@ func shallows_band(at: Vector2, bounds: Rect2) -> int:
 			return line
 
 	return chains.size()
+
+
+# --- the shallows' rock pools -------------------------------------------------
+
+## How big a rock pool's post is, as a fraction of the short half-extent: 103.5 units at
+## `shallows`' size.
+##
+## [b]The door is the design number and the post is what sets the room.[/b] The post
+## stands one tight door off each wall of a corner, and the room behind it is the
+## corner's inscribed circle against the post: 163 at 0.045 (about 415 mass) behind
+## doors that let out 124 (about 240), so it holds more than it lets out, the den's
+## price. The room barely moves with the post (153 at 0.02); what the post buys is a
+## pocket a chaser at the door cannot reach into — its front is held a post's width
+## further out — and much bigger it reaches toward the last line, whose water a leader
+## needs.
+const POOL_RADIUS := 0.045
+
+
+## The shallows' second part: a rock pool in each corner of the open water.
+##
+## [b]A small monster in the open water is the furthest it can be from the shallows.[/b]
+## The lines make the west wall a refuge for everybody small enough to reach it — and a
+## starting monster that spawns against the open wall has five lines and 4000 units of
+## leader's water to cross to get there, which is the one place on the map its size buys
+## it nothing. A rock pool is a piece of the shallows at the other end: one post standing
+## exactly the tightest line's gap off both walls of a corner, so it has two doors, each
+## the tightest line's width, and a room behind the post that holds a radius of 163.
+## Two doors for the harbours' reason: a monster waiting at one is a corner away from
+## the other.
+##
+## [b]Appended after the lines[/b], so every chain index and every line check is
+## unchanged, and the posts are their own [member pools] list because they are neither a
+## barrier nor a ring. Both pools are on the open wall's corners: the shallow wall's
+## corners are already behind the tightest line.
+##
+## [b]It encloses floor, so hunters are refused it[/b] ([method in_pool], asked by
+## [method HungryHunters.spawnable]), as they are the harbours, the cove and the deepest
+## band.
+static func _append_pools(layout: HungryLayout, bounds: Rect2) -> void:
+	var along_x := bounds.size.x >= bounds.size.y
+	var short_half := minf(bounds.size.x, bounds.size.y) * 0.5
+	var door := pool_door(short_half)
+	var radius := short_half * POOL_RADIUS
+	var off := door + radius
+
+	for side in [-1.0, 1.0]:
+		var corner := Vector2(bounds.end.x, bounds.position.y if side < 0.0 else bounds.end.y) \
+			if along_x else Vector2(bounds.position.x if side < 0.0 else bounds.end.x, bounds.end.y)
+		var at := corner - Vector2(off * signf(corner.x - bounds.get_center().x),
+			off * signf(corner.y - bounds.get_center().y))
+		layout.pools.append(Vector2i(layout.blocks.size(), 1))
+		layout.blocks.append(Vector3(at.x, at.y, radius))
+
+
+## The width of both of a rock pool's doors: the shallows' tightest line.
+static func pool_door(short_half: float) -> float:
+	return shallows_widths(short_half)[0]
+
+
+## Which rock pool [param at] is inside, or -1: further into the corner than the post's
+## centre on both axes. The doors are on those two lines, so a point in a doorway counts,
+## as a point between two harbour posts does.
+func pool_of(at: Vector2, bounds: Rect2) -> int:
+	if id != SHALLOWS:
+		return -1
+
+	var centre := bounds.get_center()
+
+	for index in range(pools.size()):
+		var post := blocks[pools[index].x]
+		var corner := Vector2(signf(post.x - centre.x), signf(post.y - centre.y))
+
+		if (at.x - post.x) * corner.x > 0.0 and (at.y - post.y) * corner.y > 0.0:
+			return index
+
+	return -1
+
+
+## Whether [param at] is inside either rock pool.
+func in_pool(at: Vector2, bounds: Rect2) -> bool:
+	return pool_of(at, bounds) >= 0
 
 
 ## One barrier of rocks [param behind] units along the crossing axis from the world's

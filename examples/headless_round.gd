@@ -38,7 +38,7 @@ const HungryWorld := preload("../game/hungry_world.gd")
 const SEED := 20260828
 const TICK_RATE := 60
 
-const CHECKS := 422
+const CHECKS := 436
 
 var _passed := 0
 var _failed := 0
@@ -98,6 +98,7 @@ func _run() -> void:
 	_test_the_spits()
 	_test_the_cove()
 	_test_the_shallows()
+	_test_the_rock_pools()
 	_test_the_den()
 	_test_the_harbours()
 	_test_hunter_round_a_rock()
@@ -3564,7 +3565,9 @@ func _test_the_shallows() -> void:
 		var outside := 0
 
 		for point: Vector2 in stranded:
-			if layout.shallows_band(point, bounds) > line:
+			# The rock pools are in the open water and shut to everybody over the
+			# tightest line's limit; their own section asks them.
+			if layout.shallows_band(point, bounds) > line and not layout.in_pool(point, bounds):
 				outside += 1
 
 		tiers.append("%.0f mass: %d of %d" % [rules.mass_for(over), sweep["reached"], sweep["free"]])
@@ -3702,6 +3705,249 @@ func _test_the_shallows() -> void:
 	print("        the leader's floor starts %.0f in from the open wall, %.0f%% of the width"
 		% [bounds.end.x - (line_x[lines - 2] + post_r[lines - 2]),
 			(bounds.end.x - (line_x[lines - 2] + post_r[lines - 2])) / bounds.size.x * 100.0])
+
+	_drop(world)
+	_done()
+
+
+## The shallows' rock pools: one post off each corner of the open water, two doors each
+## the tightest line's width, and a room behind it.
+##
+## [b]The cove's questions, asked in a corner.[/b] The doors measured off the discs; the
+## water between a pool and the last line wider than a leader; the room holding more
+## than a door lets out; a monster just too big for a door reaching everything but the
+## pools and the deepest band; hunters refused; and then driven — a starting monster from
+## the open water into the south pool, a leader along the open wall to the floor beside
+## it, both at their ground speed, and straight along the south wall at the door: a
+## starting monster comes in, one at 1.6 times the door's limit is held.
+func _test_the_rock_pools() -> void:
+	_section("the rock pools")
+
+	var preset := HungryPreset.shallows()
+	var leader_mass := preset.win_mass
+	# Lifted for the cove's reason: the leader eats on its walk.
+	preset.win_mass = 1000000.0
+	var world := _make_world(preset, SEED + 271)
+	world.add_player(1, "Poo")
+	_settle(world)
+
+	var bounds := world.arena.bounds
+	var layout := world.layout
+	var rules := world.tunables.mass_rules
+	var lines := HungryLayout.SHALLOWS_LINES
+	var line_posts := 0
+
+	for run in layout.chains:
+		line_posts += run.y
+
+	if not _check(
+		layout != null and layout.pools.size() == 2 and layout.chains.size() == lines
+			and layout.pools[0] == Vector2i(line_posts, 1) and layout.pools[1] == Vector2i(line_posts + 1, 1)
+			and layout.count() == line_posts + 2,
+		"the shallows have two rock pools of one post each, after the five lines",
+		"pools %s, %d posts in the lines, %d in all" % [
+			str(layout.pools) if layout != null else "none", line_posts, layout.count() if layout != null else -1
+		]
+	):
+		_drop(world)
+		_done()
+		return
+
+	var short_half := minf(bounds.size.x, bounds.size.y) * 0.5
+	var door := HungryLayout.pool_door(short_half)
+	var widths := HungryLayout.shallows_widths(short_half)
+	var won := rules.radius_for(leader_mass)
+	var start := rules.radius_for(HungryContent.START_MASS)
+	var centre := bounds.get_center()
+	var last_line := layout.chains[lines - 1]
+
+	# --- The doors, which are the level ---------------------------------------
+
+	var doors := PackedFloat32Array()
+	var placed := true
+	var to_line := INF
+
+	for run in layout.pools:
+		var post := layout.blocks[run.x]
+		var at := Vector2(post.x, post.y)
+		var corner := Vector2(signf(post.x - centre.x), signf(post.y - centre.y))
+		var wall_x := bounds.end.x if corner.x > 0.0 else bounds.position.x
+		var wall_y := bounds.end.y if corner.y > 0.0 else bounds.position.y
+		doors.append(absf(wall_x - post.x) - post.z)
+		doors.append(absf(wall_y - post.y) - post.z)
+		placed = placed and corner.x > 0.0 and layout.shallows_band(at, bounds) == lines
+
+		for index in range(last_line.x, last_line.x + last_line.y):
+			var o := layout.blocks[index]
+			to_line = minf(to_line, at.distance_to(Vector2(o.x, o.y)) - post.z - o.z)
+
+		# And the open wall's own face of the last line, which is where a leader walks.
+		var face := layout.blocks[last_line.x].x + layout.blocks[last_line.x].z
+		to_line = minf(to_line, post.x - post.z - face)
+
+	_check(
+		absf(door - widths[0]) < 0.5
+			and float(Array(doors).max()) - door < 0.5 and door - float(Array(doors).min()) < 0.5,
+		"all four doors, measured off the discs, are the tightest line's gap",
+		"built %s, the tightest line %.0f" % [_widths(doors), widths[0]]
+	)
+	_check(
+		placed and to_line > won * 2.0 + 40.0,
+		"both pools stand in the open water's corners, past the last line by more than a leader",
+		"%.0f of water between a pool and the last line, a leader %.0f across" % [to_line, won * 2.0]
+	)
+	_check(
+		absf(layout.narrowest_gate(bounds) - widths[0]) < 1.0,
+		"and nothing on the map is tighter than the tightest line",
+		"narrowest %.0f" % layout.narrowest_gate(bounds)
+	)
+
+	# --- A room: it holds more than it lets out -------------------------------
+
+	var south := layout.blocks[layout.pools[1].x]
+	var south_at := Vector2(south.x, south.y)
+	# The corner's inscribed circle against the post, on the diagonal.
+	var diagonal := Vector2(1.0, 1.0).normalized()
+	var to_corner := bounds.end - south_at
+	var holds := (to_corner.x * sqrt(2.0) - south.z) / (1.0 + sqrt(2.0))
+	var inside := bounds.end - Vector2(holds, holds)
+	var clear := minf(
+		minf(bounds.end.x - inside.x, bounds.end.y - inside.y), inside.distance_to(south_at) - south.z
+	)
+	_check(
+		layout.in_pool(inside, bounds) and layout.pool_of(inside, bounds) == 1
+			and not layout.in_pool(south_at - diagonal * (south.z + 1.0), bounds)
+			and absf(clear - holds) < 0.5 and holds > door * 0.5 + 24.0 and holds < won,
+		"it is a room: its corner holds a radius wider than a door lets out, and nothing a leader's size",
+		"holds %.0f (%.0f mass), lets out %.0f (%.0f mass), a leader %.0f"
+			% [holds, rules.mass_for(holds), door * 0.5, rules.mass_for(door * 0.5), won]
+	)
+
+	# --- Reach: just too big for a door ---------------------------------------
+
+	var open_water := Vector2(bounds.end.x - won - 30.0, centre.y)
+	var outgrown := door * 0.5 + 16.0
+	var sweep := layout.reach(bounds, open_water, outgrown)
+	var loose := 0
+	var pool_points := PackedInt32Array([0, 0])
+
+	for point: Vector2 in sweep["stranded"]:
+		var which := layout.pool_of(point, bounds)
+
+		if which >= 0:
+			pool_points[which] += 1
+		elif layout.shallows_band(point, bounds) != 0:
+			loose += 1
+
+	_check(
+		loose == 0 and pool_points[0] > 0 and pool_points[1] > 0,
+		"one just too big for a door reaches everything but the pools and the deepest band",
+		"radius %.0f: %d of %d reached; %d stranded elsewhere, %d and %d in the pools"
+			% [outgrown, sweep["reached"], sweep["free"], loose, pool_points[0], pool_points[1]]
+	)
+	_check(
+		layout.route_to(bounds, open_water, inside, outgrown).is_empty()
+			and not layout.route_to(bounds, open_water, inside, door * 0.5 - 16.0).is_empty(),
+		"so it has no route into a pool, and one just under a door has"
+	)
+
+	# --- Hunters: refused, as the cove is -------------------------------------
+
+	var lurker := HungryHunters.largest_radius()
+	var region := layout.main_region(bounds, lurker)
+	var seeded := 0
+
+	for at in HungryHunters.spawn_points_for(layout, bounds):
+		if layout.in_pool(at, bounds):
+			seeded += 1
+
+	_check(
+		HungryLayout.in_region(region, bounds, inside)
+			and not HungryHunters.spawnable(layout, bounds, inside, region) and seeded == 0,
+		"a lurker fits its doors, and a hunter still may not appear inside it",
+		"lurker radius %.1f; %d seeded points inside" % [lurker, seeded]
+	)
+
+	# --- Driven: a starting monster in, a leader beside it --------------------
+
+	world.spawn(1, open_water)
+	_run_ticks(world, 2)
+
+	var monster := world.monster_for(1)
+
+	if not _check(monster != null and monster.alive, "a starting monster spawns in the open water"):
+		_drop(world)
+		_done()
+		return
+
+	var small := monster.pieces[0].radius()
+	var into := layout.route_to(bounds, monster.centre(), inside, small + 24.0)
+	var small_drive := _drive_route(world, monster, into, diagonal, TICK_RATE * 30)
+	_check(
+		into.size() >= 1 and small_drive["deepest"] > -2.0
+			and small_drive["reached"] == into.size() and layout.pool_of(monster.centre(), bounds) == 1,
+		"driven along its route from the open water, it never overlaps a post and stands inside the south pool",
+		"%d of %d waypoints, deepest %.1f into a face, at %s"
+			% [small_drive["reached"], into.size(), small_drive["deepest"], str(monster.centre())]
+	)
+
+	# A leader along the open wall to the floor in front of the pool's west door: the
+	# water between the pool and the last line is the way, and has to still be one.
+	world.spawn(1, open_water)
+	_run_ticks(world, 2)
+	monster = world.monster_for(1)
+	world.feed_player(1, leader_mass - monster.mass())
+	_run_ticks(world, 2)
+
+	var leader := monster.pieces[0].radius()
+	var beside := Vector2(south.x - south.z - leader - 40.0, bounds.end.y - leader - 8.0)
+	var past := layout.route_to(bounds, monster.centre(), beside, leader + 12.0, 12.0)
+	var leader_drive := _drive_route(world, monster, past, Vector2.DOWN, TICK_RATE * 60)
+	_check(
+		monster.pieces.size() == 1 and leader > won - 2.0 and past.size() >= 1
+			and leader_drive["deepest"] > -2.0 and leader_drive["reached"] == past.size()
+			and not layout.in_pool(monster.centre(), bounds),
+		"a leader driven along the open water to the south wall beside the pool never overlaps a post",
+		"radius %.0f of %.0f in %d pieces, %d of %d waypoints, deepest %.1f, at %s"
+			% [leader, won, monster.pieces.size(), leader_drive["reached"], past.size(),
+				leader_drive["deepest"], str(monster.centre())]
+	)
+	_check(
+		small_drive["covered"] > small_drive["length"] * 0.9
+			and leader_drive["covered"] > leader_drive["length"] * 0.9
+			and small_drive["pace"] > 0.95 and leader_drive["pace"] > 0.95,
+		"and both covered their routes at their ground speed",
+		"in %.0f of %.0f at %.2f of ground speed; beside %.0f of %.0f at %.2f"
+			% [small_drive["covered"], small_drive["length"], small_drive["pace"],
+				leader_drive["covered"], leader_drive["length"], leader_drive["pace"]]
+	)
+
+	# --- Straight along the south wall at the west door -----------------------
+
+	var hug := bounds.end.y - door * 0.5
+	var from_west := Vector2(south.x - 900.0, hug)
+	var to_east := Vector2(bounds.end.x + 400.0, hug)
+	var door_line := south.x
+	var small_got := _straight_run(world, 1, from_west, to_east, 0.0)
+	_check(
+		small_got > door_line + 24.0,
+		"a starting monster driven straight along the south wall comes in through the door",
+		"reached %.0f, the door is at %.0f" % [small_got, door_line]
+	)
+
+	var fed := rules.mass_for(door * 0.5) * 1.6
+	var big_got := _straight_run(world, 1, from_west, to_east, fed)
+	monster = world.monster_for(1)
+	var big_r := monster.pieces[0].radius() if monster != null else 0.0
+	# Its front against a starting monster tucked into the corner at the back.
+	var short_by := (bounds.end.x - start * 2.0) - (big_got + big_r)
+	_check(
+		monster != null and big_got < door_line and not layout.in_pool(monster.centre(), bounds) and short_by > 0.0,
+		"one of %.0f mass on the same line is held at the door, its front short of a starting monster in the corner" % fed,
+		"reached %.0f, the door at %.0f, its front %.0f short" % [big_got, door_line, short_by]
+	)
+	print("        the room holds %.0f, the doors let out %.0f; %.0f of water to the last line, a leader %.0f across; the held one's front %.0f short of the corner"
+		% [holds, door * 0.5, to_line, won * 2.0, short_by])
 
 	_drop(world)
 	_done()
