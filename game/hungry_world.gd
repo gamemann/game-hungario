@@ -897,7 +897,21 @@ func block_piece(piece: HungryPiece) -> bool:
 	if Dot2DAdminModifiers.is_noclipped(piece.state):
 		return false
 
-	return layout.resolve_circle(piece.state, piece.radius())
+	if not layout.resolve_circle(piece.state, piece.radius()):
+		return false
+
+	# [b]And back inside the arena, because the push-out does not know the wall is there
+	# (`[refuge-outgrown-1]`).[/b] The motor clamps a moving piece BEFORE this call, so a
+	# piece wider than the gap between a rock and a wall — anything that has outgrown a
+	# harbour, a rock pool, the cove or the shallows' deepest band, or a grown monster in a
+	# slalom gate — was pushed out of the rock and through the wall, and stood there: up
+	# to 290 units past the edge, cut off by it on screen, still or steering. The arena
+	# invariant [method _grow] keeps for growing is kept here for pushing. Such a piece
+	# now overlaps the rock instead, as one that outgrew the den always has; whether an
+	# outgrown monster should be squeezed, capped or split is a design question this
+	# does not answer. Pure, so a client's replay agrees.
+	piece.state.position = arena.clamp_position(piece.state.position, piece.radius())
+	return true
 
 
 ## Pushes one monster's own pieces apart. Client side, once per tick after predicting.

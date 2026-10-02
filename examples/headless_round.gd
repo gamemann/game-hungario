@@ -38,7 +38,7 @@ const HungryWorld := preload("../game/hungry_world.gd")
 const SEED := 20260828
 const TICK_RATE := 60
 
-const CHECKS := 436
+const CHECKS := 437
 
 var _passed := 0
 var _failed := 0
@@ -3948,6 +3948,42 @@ func _test_the_rock_pools() -> void:
 	)
 	print("        the room holds %.0f, the doors let out %.0f; %.0f of water to the last line, a leader %.0f across; the held one's front %.0f short of the corner"
 		% [holds, door * 0.5, to_line, won * 2.0, short_by])
+
+	# --- Outgrown: a monster too big for the room stays inside the arena ----------
+	# `[refuge-outgrown-1]`: the post's push-out used to put it through the wall (113
+	# units past the edge at 825 mass, steering or not). It overlaps the post instead.
+	var og_corner := bounds.end - Vector2(holds, holds)
+	world.spawn(1, og_corner)
+	world.tick({})
+	monster = world.monster_for(1)
+	var og_outgrown := rules.mass_for(holds * 1.4)
+	world.feed_player(1, og_outgrown - monster.mass())
+	var og_past := 0.0
+
+	for _i in range(world.tick_rate):
+		world.tick({1: _aim_at(monster.centre(), bounds.end)})
+		var og_piece := monster.pieces[0]
+		var og_inside := bounds.grow(-og_piece.radius())
+		var og_at := og_piece.position()
+		og_past = maxf(og_past, maxf(
+			maxf(og_inside.position.x - og_at.x, og_at.x - og_inside.end.x),
+			maxf(og_inside.position.y - og_at.y, og_at.y - og_inside.end.y)
+		))
+
+	var og_overlap := 0.0
+
+	for block in layout.blocks:
+		og_overlap = maxf(og_overlap, block.z + monster.pieces[0].radius()
+			- monster.centre().distance_to(Vector2(block.x, block.y)))
+
+	_check(
+		layout.in_pool(og_corner, bounds) and og_past <= 0.5,
+		"a monster grown past a pool's room, held into the corner, is never pushed through the arena's wall",
+		"%.0f mass (radius %.0f, the room holds %.0f): %.1f past the wall at worst, %.1f into the post"
+			% [monster.mass(), monster.pieces[0].radius(), holds, og_past, og_overlap]
+	)
+	print("        outgrown: %.0f mass in a room holding %.0f overlaps the post by %.0f and stands %.1f past the wall"
+		% [monster.mass(), holds, og_overlap, og_past])
 
 	_drop(world)
 	_done()

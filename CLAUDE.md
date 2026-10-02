@@ -720,7 +720,7 @@ find . -name '*.gd' -not -path './.godot/*' -not -path './addons/*' | while read
     godot --headless --path . --check-only --script "res://${f#./}"
 done
 
-godot --headless --path . res://examples/headless_round.tscn   # 436 — the game
+godot --headless --path . res://examples/headless_round.tscn   # 437 — the game
 godot --headless --path . res://examples/headless_stack.tscn   #  24 checks
 godot --headless --path . res://examples/headless_net.tscn     # 158 — the netcode
 godot --headless --path . res://examples/dedicated.tscn        # 208 — a real DotServer
@@ -729,7 +729,7 @@ godot --headless --path . res://examples/content.tscn          #  46 — the clo
 godot --headless --path . res://examples/headless_presentation.tscn  # 90 — the client half
 ```
 
-1061 checks across seven suites. Every one of them has a section counter and a CHECKS total; `sandbox` and `content` were the last two with only the counter, and got theirs on 2026-09-24 (each armed: CHECKS raised by one, exit 1). Add `-- --verbose` to `dedicated`, `sandbox` or `content` when one fails and
+1062 checks across seven suites. Every one of them has a section counter and a CHECKS total; `sandbox` and `content` were the last two with only the counter, and got theirs on 2026-09-24 (each armed: CHECKS raised by one, exit 1). Add `-- --verbose` to `dedicated`, `sandbox` or `content` when one fails and
 the reason is in a log line rather than in the assertion.
 
 **Run `headless_round` after any change to dot-2d** and **`headless_net` after any change
@@ -776,6 +776,8 @@ tools/screenshot_menus.sh              # the screens
 **It printed four SCRIPT ERRORs at every startup for as long as the vote frame has existed, and the frames came out anyway (fixed 2026-09-24).** The menus tool's trap, one tool over: `HungryWorld.setup()` adds its `DotMatch` as a child from `SceneTree._initialize`, where the root is not yet inside the tree, so the match had no `_ready`, no scoreboard, and `start`, `add_player` and `tick` each died on a `Nil`. The world limped on without a match — the vote frame's clock said `IDLE` — and fixing it uncovered two framings that had only been right by accident: the whole-arena frame is pinned through the rig's anchor (`position_source`) because a camera position alone is undone by the rig following its anchor, which used to sit at the origin only because the player never existed; and the zoom now snaps per shot (`zoom_sec = 0`), because four frames of a 0.45 s ease left the gate and grown frames at nearly the same zoom. The vote frame refreshes the board, which the client does on its own cadence and the tool never did. The world is driven from `_boot()` on the first frame now. **And its player's-view frames were never where they said (fixed 2026-09-24):** `_boot` ticked until live before adding the player, which is `headless_round`'s old `_settle` trap exactly — dot-match waits in warmup for somebody, so the next tick after the player was added was the reset, and it respawned them at a safe spawn. `--at=640,0` and the default came out as the same frame. The player is added first now.
 
 **The grown frame used to be taken one tick too early (`[hungario-grown-1]`, fixed 2026-10-01).** A tick pushes a piece out of the rocks and THEN resolves eating, so a monster the tool had just fed 805 mass swallowed the food under its new disc on the next tick and was photographed overlapping a post by exactly that growth (12.7 units in `shallows_grown`; 825 -> 919 mass). The game pushes it out on the tick after; the tool now ticks until the player stands clear, up to 30 ticks. A monster grown past a refuge's room stays overlapping, and that is the game (see the rock pools).
+
+**Every frame now reports any monster inside a rock or past the arena's edge** (a `WARNING` line naming the frame; 2026-10-02). It found two more placements of the tool's own: the default grown frame in `gauntlet` fed the player in a slalom gate it did not fit (sat 190 into a post idle; a steering player walks out), and the beacon frame's two extra monsters were placed by hand with one tick to come out of a rock. The grown frame now moves the player to the nearest spot its grown size fits (`_room_for`) unless `--at` was given, and the beacon monsters are placed the same way. Under `--at` a warning is the point: the refuge frames show what happens to a monster that outgrows its room (`[refuge-outgrown-1]`).
 
 **The third one found a bug the first night it existed.** `HungryRenderer._view` and dot-2d's `Dot2DCameraRig` both computed the visible rectangle as the viewport *multiplied* by the zoom. Godot's `Camera2D.zoom` is a magnification — a zoom of 2 covers half the world, not twice it — so both were wrong by the square of the zoom in area, and the zoom here only leaves 1.0 once the player has grown. A monster at half the winning mass sees 2100 units across and had everything past 400 of them culled: most of the screen simply stopped being drawn, on a black background, which reads as an empty arena rather than as a rendering fault. 705 checks across seven suites passed before and after.
 
