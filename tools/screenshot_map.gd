@@ -2,6 +2,7 @@ extends SceneTree
 
 const HungryCamera := preload("../game/client/hungry_camera.gd")
 const HungryConfig := preload("../game/hungry_config.gd")
+const HungryContent := preload("../game/hungry_content.gd")
 const HungryPresentation := preload("../game/client/hungry_presentation.gd")
 const HungrySound := preload("../game/client/hungry_sound.gd")
 const HungryHud := preload("../game/client/hungry_hud.gd")
@@ -203,6 +204,17 @@ func _process(_delta: float) -> bool:
 		var monster := _world.monster_for(1)
 
 		if float(shot["mass"]) > 0.0 and monster != null:
+			# The default spot is chosen for the starting monster's view, and in the
+			# gauntlet it is a slalom gate a grown one does not fit: fed there and left idle
+			# it sat 190 units into a post (89 past the wall, before [refuge-outgrown-1]),
+			# where any player steering would have walked out. So the grown frame moves it
+			# to where its grown size fits first. Not under `--at`: a refuge frame is asking
+			# exactly what happens to a monster that outgrows the room it stands in.
+			if _stand_at == Vector2.INF and _world.layout != null:
+				# With a margin: it eats what its new disc covers (495 -> 591 in the gauntlet).
+				var grown := _world.tunables.mass_rules.radius_for(float(shot["mass"])) * 1.3
+				monster.pieces[0].state.position = _room_for(monster.centre(), grown)
+
 			_world.feed_player(1, float(shot["mass"]) - monster.mass())
 
 		if bool(shot["whole"]):
@@ -281,6 +293,13 @@ func _process(_delta: float) -> bool:
 		_renderer.queue_redraw()
 		return false
 
+	# Every monster in the frame, not only the player: the beacon frame spawns two more
+	# with one tick to be pushed out, and a frame of a body inside a rock is a level bug
+	# report that the level did not earn. Printed rather than fixed, because the game is
+	# what does the pushing and the tool must not hide it when the game does not.
+	for line in _overlaps():
+		push_warning("%s: %s" % [shot["name"], line])
+
 	var image := root.get_texture().get_image()
 	var path := "%s/%s.png" % [OUT_DIR, shot["name"]]
 	image.save_png(ProjectSettings.globalize_path(path))
@@ -289,6 +308,22 @@ func _process(_delta: float) -> bool:
 	_at += 1
 	_wait = SETTLE
 	return false
+
+
+## The nearest point to [param from] where a disc of [param radius] is clear of the rocks
+## and inside the arena, searched in rings. [method HungryLayout.nearest_clear] walks out
+## of one rock at a time and so cannot leave a gap that is narrower than the disc.
+func _room_for(from: Vector2, radius: float) -> Vector2:
+	var inside := _world.arena.bounds.grow(-radius)
+
+	for ring in range(0, 60):
+		for step in range(maxi(1, ring * 8)):
+			var at := from + Vector2.RIGHT.rotated(TAU * step / maxf(1.0, ring * 8.0)) * ring * 40.0
+
+			if inside.has_point(at) and not _world.layout.blocked(at, radius):
+				return at
+
+	return from
 
 
 ## Whether any of the player's pieces overlaps the level by more than half a unit.
@@ -303,6 +338,46 @@ func _player_overlaps() -> bool:
 			return true
 
 	return false
+
+
+## Every piece of every monster that overlaps the level or crosses the arena's edge by
+## more than half a unit, one line each.
+func _overlaps() -> PackedStringArray:
+	var out := PackedStringArray()
+
+	if _world.layout == null:
+		return out
+
+	for monster in _world.monsters():
+		for piece in monster.pieces:
+			var deepest := 0.0
+
+			for block in _world.layout.blocks:
+				var depth := (block.z + piece.radius()) - piece.position().distance_to(
+					Vector2(block.x, block.y)
+				)
+				deepest = maxf(deepest, depth)
+
+			if deepest > 0.5:
+				out.append("player %d overlaps a rock by %.1f (mass %.0f)" % [
+					monster.id, deepest, piece.mass()
+				])
+
+			# The arena's edge as well: a refuge backed by a wall pushes an outgrown piece
+			# out of its post and through the wall instead ([refuge-outgrown-1]).
+			var inside := _world.arena.bounds.grow(-piece.radius())
+			var at := piece.position()
+			var past := maxf(
+				maxf(inside.position.x - at.x, at.x - inside.end.x),
+				maxf(inside.position.y - at.y, at.y - inside.end.y)
+			)
+
+			if past > 0.5:
+				out.append("player %d is past the arena's edge by %.1f (mass %.0f)" % [
+					monster.id, past, piece.mass()
+				])
+
+	return out
 
 
 ## A burst beside the player and four mouthfuls round it, drawn by the real
@@ -343,9 +418,13 @@ func _beacon_two() -> void:
 
 	if _world.monster_for(2) == null:
 		_world.add_player(2, "Beaconed")
-		_world.spawn(2, me.centre() + Vector2(360.0, -40.0))
+		# Where a starting monster fits: these are placed by hand, not by the game's own
+		# safe spawn, and a hand placement inside a rock got one tick to come out (0.9
+		# units still in a gauntlet post on the beacon frame).
+		var small := _world.tunables.mass_rules.radius_for(HungryContent.START_MASS) * 1.3
+		_world.spawn(2, _room_for(me.centre() + Vector2(360.0, -40.0), small))
 		_world.add_player(3, "Far Away")
-		_world.spawn(3, _world.arena.bounds.position + Vector2(160.0, 160.0))
+		_world.spawn(3, _room_for(_world.arena.bounds.position + Vector2(160.0, 160.0), small))
 
 	_world.monster_for(2).beacon = true
 	_world.monster_for(3).beacon = true
