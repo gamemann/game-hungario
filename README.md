@@ -1,4 +1,8 @@
-This is a **game** built on TMC's **Dot** collection, rather than a piece of it. It was written to run the whole family end to end, and it is the first thing here a person can actually sit down and play.
+This is a game to demonstrate the capabilities of the [**Dot collection**](https://moddingcommunity.com/co/4-dot-assets) built on-top of [Godot 4](https://godotengine.org/) and [TMC's gaming platform](https://moddingcommunity.com/play). In this 2D game, players start off as a small monster and grow by consuming food and other players. You may use space to split and throw yourself at others. This is heavily inspired off of the game [Agario](https://agar.io)!
+
+![Preview](https://github.com/gamemann/game-hungario/blob/main/images/preview.gif?raw=true)
+
+*Play on my test server [here](https://moddingcommunity.com/hungario/s/hungario01/play)!*
 
 The **Dot** collection is a set of open source Godot 4 assets that provide modular building blocks for games and applications in the TMC ecosystem, covering core functionality, networking, authentication, cloud integration, and more. This project is built out of them, so it doubles as a worked example of what they look like in a real game rather than in a demo.
 
