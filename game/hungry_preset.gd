@@ -303,8 +303,8 @@ static func shallows() -> HungryPreset:
 	# [b]Classic's density over the floor that is actually left[/b] (see the reef's
 	# note: the field refills what the cull takes, so the target is what stands on the
 	# floor). Thirty-eight posts cover 0.43 million of 21.16 million square units, 2.0%,
-	# and the two rock pools' posts 0.07 more; Classic's 40.7 per million on the 20.66
-	# left is 840 (843 before the pools).
+	# and the two rock pools' posts 0.07 more, the groynes' four 0.017; Classic's 40.7
+	# per million on the 20.64 left is 840 (843 before the pools, 840 before the groynes).
 	preset.food_target = 840
 
 	# The reef's reason, once per line: a pepper splits somebody into halves that fit a

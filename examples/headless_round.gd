@@ -38,7 +38,7 @@ const HungryWorld := preload("../game/hungry_world.gd")
 const SEED := 20260828
 const TICK_RATE := 60
 
-const CHECKS := 437
+const CHECKS := 450
 
 var _passed := 0
 var _failed := 0
@@ -99,6 +99,7 @@ func _run() -> void:
 	_test_the_cove()
 	_test_the_shallows()
 	_test_the_rock_pools()
+	_test_the_groynes()
 	_test_the_den()
 	_test_the_harbours()
 	_test_hunter_round_a_rock()
@@ -3555,6 +3556,7 @@ func _test_the_shallows() -> void:
 	var tiers := PackedStringArray()
 	var leaks := PackedStringArray()
 	var last_stranded := 0
+	var groyne_widest := HungryLayout.groyne_doors(short_half)[2]
 
 	for line in range(lines):
 		var over := widths[line] * 0.5 + 16.0
@@ -3564,10 +3566,16 @@ func _test_the_shallows() -> void:
 		var stranded: PackedVector2Array = sweep["stranded"]
 		var outside := 0
 
+		var start_bay := layout.bay_of(Vector2(bounds.end.x - over - 30.0, open_water.y), bounds)
+		# Too big for every groyne door and for the last line, the bays it did not start
+		# in are behind both; the groynes' own section asks them.
+		var walled_in := over * 2.0 > groyne_widest and over * 2.0 > widths[lines - 1]
+
 		for point: Vector2 in stranded:
 			# The rock pools are in the open water and shut to everybody over the
 			# tightest line's limit; their own section asks them.
-			if layout.shallows_band(point, bounds) > line and not layout.in_pool(point, bounds):
+			if layout.shallows_band(point, bounds) > line and not layout.in_pool(point, bounds) \
+					and not (walled_in and layout.bay_of(point, bounds) != start_bay):
 				outside += 1
 
 		tiers.append("%.0f mass: %d of %d" % [rules.mass_for(over), sweep["reached"], sweep["free"]])
@@ -3743,7 +3751,7 @@ func _test_the_rock_pools() -> void:
 	if not _check(
 		layout != null and layout.pools.size() == 2 and layout.chains.size() == lines
 			and layout.pools[0] == Vector2i(line_posts, 1) and layout.pools[1] == Vector2i(line_posts + 1, 1)
-			and layout.count() == line_posts + 2,
+			and layout.count() == line_posts + 2 + layout.groynes.size() * 2,
 		"the shallows have two rock pools of one post each, after the five lines",
 		"pools %s, %d posts in the lines, %d in all" % [
 			str(layout.pools) if layout != null else "none", line_posts, layout.count() if layout != null else -1
@@ -3984,6 +3992,254 @@ func _test_the_rock_pools() -> void:
 	)
 	print("        outgrown: %.0f mass in a room holding %.0f overlaps the post by %.0f and stands %.1f past the wall"
 		% [monster.mass(), holds, og_overlap, og_past])
+
+	_drop(world)
+	_done()
+
+
+## The shallows' groynes: two posts each from a quarter post of the last line to the
+## open wall, three doors each the shallows' first three gaps, tightest at the line.
+##
+## [b]What a groyne is for is a detour, so the section measures one.[/b] The doors
+## measured off the discs and joined to the line; the open water cut into three bays;
+## the same crossing planned for a starting monster (straight through the wall door)
+## and for a leader (back through the last line and round), and both DRIVEN at their
+## ground speed; straight at the wall door, one just under its limit comes through and
+## one at 1.6 times it is held. And because `[refuge-outgrown-1]` asks it of every
+## enclosed room: a bay is not one — a hunter may appear in every bay, and a monster
+## grown past the tightest door while standing in it ends up in a bay, touching nothing.
+func _test_the_groynes() -> void:
+	_section("the groynes")
+
+	var preset := HungryPreset.shallows()
+	var leader_mass := preset.win_mass
+	# Lifted for the cove's reason: the leader eats on its walk.
+	preset.win_mass = 1000000.0
+	var world := _make_world(preset, SEED + 277)
+	world.add_player(1, "Gro")
+	_settle(world)
+
+	var bounds := world.arena.bounds
+	var layout := world.layout
+	var rules := world.tunables.mass_rules
+	var lines := HungryLayout.SHALLOWS_LINES
+	var line_posts := 0
+
+	for run in layout.chains:
+		line_posts += run.y
+
+	if not _check(
+		layout != null and layout.groynes.size() == 2 and layout.chains.size() == lines
+			and layout.groynes[0] == Vector2i(line_posts + 2, 2) and layout.groynes[1] == Vector2i(line_posts + 4, 2)
+			and layout.count() == line_posts + 6,
+		"the shallows have two groynes of two posts each, after the lines and the pools",
+		"groynes %s, %d posts in the lines, %d in all" % [
+			str(layout.groynes) if layout != null else "none", line_posts, layout.count() if layout != null else -1
+		]
+	):
+		_drop(world)
+		_done()
+		return
+
+	var short_half := minf(bounds.size.x, bounds.size.y) * 0.5
+	var doors := HungryLayout.groyne_doors(short_half)
+	var widths := HungryLayout.shallows_widths(short_half)
+	var won := rules.radius_for(leader_mass)
+	var last_line := layout.chains[lines - 1]
+
+	# --- The doors, which are the level ---------------------------------------
+
+	var built := PackedFloat32Array()
+	var joined := true
+	var mismatch := 0.0
+
+	for g in range(layout.groynes.size()):
+		var run := layout.groynes[g]
+		var which := HungryLayout.GROYNE_JOINT if g == 0 else last_line.y - 1 - HungryLayout.GROYNE_JOINT
+		var joint := layout.blocks[last_line.x + which]
+		var a := layout.blocks[run.x]
+		var b := layout.blocks[run.x + 1]
+		joined = joined and absf(a.y - joint.y) < 0.01 and absf(b.y - joint.y) < 0.01 and joint.x < a.x and a.x < b.x
+		built.append(Vector2(joint.x, joint.y).distance_to(Vector2(a.x, a.y)) - joint.z - a.z)
+		built.append(Vector2(a.x, a.y).distance_to(Vector2(b.x, b.y)) - a.z - b.z)
+		built.append(bounds.end.x - b.x - b.z)
+
+		for k in range(3):
+			mismatch = maxf(mismatch, absf(built[g * 3 + k] - doors[k]))
+
+	_check(
+		joined and mismatch < 0.5 and absf(doors[0] - widths[0]) < 0.01 and absf(doors[2] - widths[2]) < 0.01
+			and doors[2] < won * 2.0,
+		"each groyne runs from a quarter post of the last line to the open wall, its doors the first three lines' gaps, tightest at the line",
+		"built %s against %s; a leader %.0f across" % [_widths(built), _widths(doors), won * 2.0]
+	)
+	_check(
+		absf(layout.narrowest_gate(bounds) - widths[0]) < 1.0,
+		"and nothing on the map is tighter than the tightest line",
+		"narrowest %.0f" % layout.narrowest_gate(bounds)
+	)
+
+	# --- Three bays -------------------------------------------------------------
+
+	var south := layout.blocks[layout.groynes[1].x]
+	var gy := south.y
+	var outer := layout.blocks[layout.groynes[1].x + 1]
+	var face := layout.blocks[last_line.x].x + layout.blocks[last_line.x].z
+	var water_x := (face + bounds.end.x) * 0.5
+	var low_gy := layout.blocks[layout.groynes[0].x].y
+	var bay_centres := [
+		Vector2(water_x, (bounds.position.y + low_gy) * 0.5), Vector2(water_x, (low_gy + gy) * 0.5),
+		Vector2(water_x, (gy + bounds.end.y) * 0.5),
+	]
+	var bays := PackedInt32Array()
+
+	for at: Vector2 in bay_centres:
+		bays.append(layout.bay_of(at, bounds))
+
+	_check(
+		bays == PackedInt32Array([0, 1, 2]) and layout.bay_of(Vector2(face - 300.0, 0.0), bounds) == -1,
+		"they cut the open water into three bays, and behind the last line is none of them",
+		"bays %s" % str(bays)
+	)
+
+	# --- The detour: one crossing, planned at both sizes --------------------------
+
+	var from := Vector2(bounds.end.x - won - 30.0, gy - won - 60.0)
+	var to := Vector2(from.x, gy + won + 60.0)
+	var start := rules.radius_for(HungryContent.START_MASS)
+	var short_way := layout.route_to(bounds, from, to, start + 24.0)
+	var long_way := layout.route_to(bounds, from, to, won + 12.0, 12.0)
+	var under := layout.route_to(bounds, from, to, doors[2] * 0.5 - 16.0)
+	var over := layout.route_to(bounds, from, to, doors[2] * 0.5 + 16.0)
+	var behind := func(route: PackedVector2Array) -> bool:
+		for point in route:
+			if layout.shallows_band(point, bounds) < lines:
+				return true
+		return false
+	var short_len := _route_length(from, short_way)
+	var long_len := _route_length(from, long_way)
+	_check(
+		not under.is_empty() and not behind.call(under) and not over.is_empty() and behind.call(over)
+			and not short_way.is_empty() and not long_way.is_empty() and behind.call(long_way)
+			and long_len > short_len * 3.0,
+		"bay to bay, one just under the wall door's limit stays in the open water and one just over goes back through the last line",
+		"under %.0f: %d waypoints; over: %d; a starting monster %.0f, a leader %.0f (%.1fx)"
+			% [_route_length(from, under), under.size(), over.size(), short_len, long_len, long_len / maxf(short_len, 1.0)]
+	)
+
+	# --- Not a refuge -------------------------------------------------------------
+
+	var lurker := HungryHunters.largest_radius()
+	var region := layout.main_region(bounds, lurker)
+	var allowed := 0
+
+	for at: Vector2 in bay_centres:
+		if HungryHunters.spawnable(layout, bounds, at, region):
+			allowed += 1
+
+	_check(allowed == 3, "no bay is a refuge: a hunter may appear in every one", "%d of 3" % allowed)
+
+	# --- Driven: the same crossing, short way and long way -------------------------
+
+	world.spawn(1, from)
+	_run_ticks(world, 2)
+	var monster := world.monster_for(1)
+
+	if not _check(monster != null and monster.alive, "a starting monster spawns in the middle bay"):
+		_drop(world)
+		_done()
+		return
+
+	var small := monster.pieces[0].radius()
+	var across := layout.route_to(bounds, monster.centre(), to, small + 24.0)
+	var small_drive := _drive_route(world, monster, across, Vector2.DOWN, TICK_RATE * 20)
+	_check(
+		across.size() >= 1 and small_drive["deepest"] > -2.0 and small_drive["reached"] == across.size()
+			and layout.bay_of(monster.centre(), bounds) == 2,
+		"a starting monster driven across through the wall door never overlaps a post and stands in the next bay",
+		"%d of %d waypoints, deepest %.1f, at %s"
+			% [small_drive["reached"], across.size(), small_drive["deepest"], str(monster.centre())]
+	)
+
+	world.spawn(1, from)
+	_run_ticks(world, 2)
+	monster = world.monster_for(1)
+	world.feed_player(1, leader_mass - monster.mass())
+	_run_ticks(world, 2)
+	var leader := monster.pieces[0].radius()
+	var round_way := layout.route_to(bounds, monster.centre(), to, leader + 12.0, 12.0)
+	var leader_drive := _drive_route(world, monster, round_way, Vector2.DOWN, TICK_RATE * 60)
+	_check(
+		monster.pieces.size() == 1 and leader > won - 2.0 and behind.call(round_way)
+			and leader_drive["deepest"] > -2.0 and leader_drive["reached"] == round_way.size()
+			and layout.bay_of(monster.centre(), bounds) == 2,
+		"a leader driven to the same place goes back through the last line and round, never overlapping a post",
+		"radius %.0f, %d of %d waypoints, deepest %.1f, at %s"
+			% [leader, leader_drive["reached"], round_way.size(), leader_drive["deepest"], str(monster.centre())]
+	)
+	_check(
+		small_drive["covered"] > small_drive["length"] * 0.9
+			and leader_drive["covered"] > leader_drive["length"] * 0.9
+			and small_drive["pace"] > 0.95 and leader_drive["pace"] > 0.95
+			and leader_drive["covered"] > small_drive["covered"] * 3.0,
+		"and both covered their routes at their ground speed, the leader three times as far",
+		"across %.0f of %.0f at %.2f; round %.0f of %.0f at %.2f"
+			% [small_drive["covered"], small_drive["length"], small_drive["pace"],
+				leader_drive["covered"], leader_drive["length"], leader_drive["pace"]]
+	)
+
+	# --- Straight at the wall door ------------------------------------------------
+
+	var door_x := (outer.x + outer.z + bounds.end.x) * 0.5
+	var run_from := Vector2(door_x, gy - 700.0)
+	var run_to := Vector2(door_x, gy + 1400.0)
+	var fits := rules.mass_for(doors[2] * 0.5 - 16.0)
+	var fit_got := _straight_run(world, 1, run_from, run_to, fits)
+	_check(
+		fit_got > gy + doors[2] * 0.5,
+		"one of %.0f mass driven straight at the wall door comes through it" % fits,
+		"reached %.0f, the groyne at %.0f" % [fit_got, gy]
+	)
+
+	var held := rules.mass_for(doors[2] * 0.5) * 1.6
+	var held_got := _straight_run(world, 1, run_from, run_to, held)
+	monster = world.monster_for(1)
+	_check(
+		monster != null and held_got < gy and layout.bay_of(monster.centre(), bounds) == 1,
+		"one of %.0f mass on the same line is held at it" % held,
+		"reached %.0f, the groyne at %.0f" % [held_got, gy]
+	)
+
+	# --- Outgrown in a door: it is pushed into a bay, not held -------------------
+
+	var joint_s := layout.blocks[last_line.x + last_line.y - 1 - HungryLayout.GROYNE_JOINT]
+	var in_door := Vector2(joint_s.x + joint_s.z + doors[0] * 0.5, gy)
+	world.spawn(1, in_door)
+	world.tick({})
+	monster = world.monster_for(1)
+	world.feed_player(1, rules.mass_for(doors[0] * 0.5 * 1.4) - monster.mass())
+	_run_ticks(world, TICK_RATE)
+	var side := signf(monster.centre().y - gy)
+	side = side if side != 0.0 else 1.0
+	var away := Vector2(monster.centre().x, gy + side * 600.0)
+
+	for _i in range(TICK_RATE * 3):
+		world.tick({1: _aim_at(monster.centre(), away)})
+
+	var overlap := -INF
+
+	for piece in monster.pieces:
+		for block in layout.blocks:
+			overlap = maxf(overlap, block.z + piece.radius() - piece.position().distance_to(Vector2(block.x, block.y)))
+
+	_check(
+		overlap <= 0.5 and layout.bay_of(monster.centre(), bounds) >= 1,
+		"a monster grown past the tightest door while standing in it steers out into a bay, touching nothing",
+		"%.0f mass (radius %.0f, the door lets through %.0f): %.1f into a post, bay %d"
+			% [monster.mass(), monster.pieces[0].radius(), doors[0] * 0.5, overlap, layout.bay_of(monster.centre(), bounds)]
+	)
+	print("        doors %s, posts %.1f; bay to bay a starting monster %.0f, a leader %.0f"
+		% [_widths(doors), south.z, short_len, long_len])
 
 	_drop(world)
 	_done()

@@ -119,6 +119,10 @@ var coves: Array[Vector2i] = []
 ## the open water. See [method _append_pools] and [method in_pool].
 var pools: Array[Vector2i] = []
 
+## The shallows' groynes, as `(first, count)`: two posts each, laid out from the last
+## line toward the open wall. See [method _append_groynes] and [method bay_of].
+var groynes: Array[Vector2i] = []
+
 
 static func none() -> HungryLayout:
 	return HungryLayout.new()
@@ -946,6 +950,7 @@ static func _shallows(bounds: Rect2) -> HungryLayout:
 		previous = radius
 
 	_append_pools(out, bounds)
+	_append_groynes(out, bounds)
 	return out
 
 
@@ -1078,6 +1083,98 @@ func pool_of(at: Vector2, bounds: Rect2) -> int:
 ## Whether [param at] is inside either rock pool.
 func in_pool(at: Vector2, bounds: Rect2) -> bool:
 	return pool_of(at, bounds) >= 0
+
+
+# --- the shallows' groynes -----------------------------------------------------
+
+## Which of the last line's posts a groyne is joined to, counted in from each end of the
+## line: the second, so with five posts the two groynes stand on the quarter posts and
+## cut the open water into a middle bay and two corner bays, each corner bay keeping its
+## rock pool.
+const GROYNE_JOINT := 1
+
+
+## The shallows' third part: two groynes across the open water, from the last line to
+## the open wall.
+##
+## [b]The open water was the one place on the map where crossing it cost nobody
+## anything.[/b] Every line is a fence you cross anywhere, the bands are N-S strips, and
+## past the last line 1222 x 4600 units of water were a chase decided by speed alone. A
+## groyne is a run of two posts from one of the last line's posts to the open wall,
+## square to the lines, whose three doors are the shallows' first three gaps laid along
+## it, tightest against the line: 248, 359 and 469 (about 240, 503 and 860 mass). So
+## a monster up to 860 mass crosses from bay to bay where it stands, and anything bigger
+## — a leader certainly — goes back through the last line, along the band inside it and
+## out again: the shallows' gradient turned through a right angle, and a detour a
+## smaller monster can make a leader walk.
+##
+## [b]Not a refuge, on purpose[/b] (`[refuge-outgrown-1]`). Every bay is open to the
+## band inside the last line through gaps of 690, wider than a leader, so no floor is
+## enclosed behind doors smaller than itself; a monster that outgrows a groyne's door
+## standing in it is pushed out into a bay, the slalom's gate, not the den's room.
+##
+## [b]The doors are the design and the posts are what is left[/b], the harbours' rule:
+## the span from the joint post's open-water face to the open wall less the three doors,
+## shared between two posts (36.4 at this mode's size). Appended after the pools, so
+## every line, chain and pool index is unchanged, and the posts are their own
+## [member groynes] list because a groyne is neither a barrier across the world nor a
+## ring — [method route_across] must not plan a crossing of one.
+static func _append_groynes(layout: HungryLayout, bounds: Rect2) -> void:
+	var along_x := bounds.size.x >= bounds.size.y
+	var short_half := minf(bounds.size.x, bounds.size.y) * 0.5
+	var doors := groyne_doors(short_half)
+	var last := layout.chains[layout.chains.size() - 1]
+	var open_wall := bounds.end.x if along_x else bounds.end.y
+
+	for which in [GROYNE_JOINT, last.y - 1 - GROYNE_JOINT]:
+		var joint := layout.blocks[last.x + which]
+		var face := (joint.x if along_x else joint.y) + joint.z
+		var across := joint.y if along_x else joint.x
+		var radius := groyne_post_radius(open_wall - face, doors)
+		var at := face
+		layout.groynes.append(Vector2i(layout.blocks.size(), doors.size() - 1))
+
+		for door in range(doors.size() - 1):
+			at += doors[door] + radius
+			layout.blocks.append(Vector3(at, across, radius) if along_x else Vector3(across, at, radius))
+			at += radius
+
+
+## A groyne's doors from the last line out to the open wall, in world units: the
+## shallows' first three gaps, tightest first.
+static func groyne_doors(short_half: float) -> PackedFloat32Array:
+	return shallows_widths(short_half).slice(0, 3)
+
+
+## The radius of a groyne's posts across [param span] of open water with [param doors]
+## in it: what the doors leave, shared between the posts.
+static func groyne_post_radius(span: float, doors: PackedFloat32Array) -> float:
+	var total := 0.0
+
+	for door in doors:
+		total += door
+
+	return (span - total) / float((doors.size() - 1) * 2)
+
+
+## Which bay of the open water [param at] is in, counted from the short axis's low wall
+## (0 south of the first groyne, 1 between them, 2 north of the second), or -1 if it is
+## not in the open water at all — behind the last line, or anything but the shallows.
+func bay_of(at: Vector2, bounds: Rect2) -> int:
+	if id != SHALLOWS or groynes.is_empty() or shallows_band(at, bounds) != chains.size():
+		return -1
+
+	var along_x := bounds.size.x >= bounds.size.y
+	var here := at.y if along_x else at.x
+	var bay := 0
+
+	for run in groynes:
+		var post := blocks[run.x]
+
+		if here > (post.y if along_x else post.x):
+			bay += 1
+
+	return bay
 
 
 ## One barrier of rocks [param behind] units along the crossing axis from the world's
