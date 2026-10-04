@@ -33,6 +33,10 @@ const HungryWorld := preload("hungry_world.gd")
 
 const CHANNEL := "hungry.module"
 
+## The drawn mode ballot's notice topic. The client shell draws one menu per topic, and a
+## server running several games sends its own `game_ballot` beside this one.
+const MAP_BALLOT_TOPIC := &"map_ballot"
+
 ## Snapshots a second. Twenty is the number [Dot2DNetSync.estimated_bits] was sized
 ## against: a hundred visible pieces at 104 bits each is about 1.3 kB a snapshot, so 20 Hz
 ## is 26 kB/s to a player in a crowd and a great deal less to everybody else.
@@ -527,6 +531,26 @@ func _build_maps() -> DotResult:
 	maps.name = "Maps"
 	maps.player_count_fn = func() -> int: return world.player_ids().size()
 	maps.is_admin_fn = _voter_is_admin
+
+	# The drawn ballot, to each playing session with its own voter id — this game's voters
+	# are the bare userid — so the client shell marks the player's own choice.
+	maps.ballot_fn = func(state: Dictionary) -> void:
+		for session in server.playing_sessions():
+			var data := state.duplicate()
+			data["you"] = str(session.userid)
+			server.send_notice(session, DotNotice.make(
+				&"", "", float(state.get("seconds", -1.0)), MAP_BALLOT_TOPIC, data
+			))
+
+	maps.people_fn = func(voter: StringName) -> Dictionary:
+		var session := server.session_by_userid(String(voter).to_int())
+
+		if session == null:
+			return {}
+
+		var avatar: Variant = session.identity.get("avatar_url") if session.identity != null else ""
+		return {"name": session.display_name, "avatar": avatar if avatar is String else ""}
+
 	add_child(maps)
 
 	var ready := maps.setup(server.games)

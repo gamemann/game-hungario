@@ -984,3 +984,7 @@ What a player loses is the Enter key, and it is one setting away.
   and what goes in is what a person filtering a list filters on: the mode (which is the
   map here), the occupancy, the round state, the leader's mass, and **whether hunters and
   hazards are on** — the two cvars that make this a different game.
+
+## The map vote is drawn on the client shell (2026-10-04)
+
+The vote wrapper owns a `DotVoteBallotFeed` and polls it every `advance`; the module points its `ballot_fn` at `server.send_notice`, one copy per playing session with that session's voter id as `you`, under the topic `map_ballot`. dot-server-deploy's shell draws it as a dot-ui `DotBallotPanel` beside the server's own `game_ballot` — number keys, F3 and a click, or both, and every voter's avatar on their choice — and a click goes back as the same `!vote`-style command a player could type. Standalone, with no shell, nothing draws it and chat still carries the ballot. Defaults moved with dot-vote's: a mode runs thirty minutes (`duration_sec` 1800, up from fifteen) and the ballot opens 150 s before it. The panel's heading says "mode". `round_based` is on, because every round end already reaches the director, so `time_up: finish_round` finishes the round in progress.

@@ -94,6 +94,17 @@ var score_fn: Callable = Callable()
 
 var commands: DotVoteCommands = null
 
+## [code]func(state: Dictionary)[/code]: the ballot as a client draws it, sent whenever it
+## changes. The host points it at the client shell (a dot-server notice), which draws a
+## menu a player picks from with a number key or a click. Unset sends nothing.
+var ballot_fn: Callable = Callable()
+
+## [code]func(voter: StringName) -> Dictionary[/code]: a voter's name and avatar URL.
+var people_fn: Callable = Callable()
+
+## What [member ballot_fn] is fed from. Polled once per [method advance].
+var feed: DotVoteBallotFeed = null
+
 ## What dot-vote's commands are called here. `vote` rather than `votefor`, so the command
 ## is the token this game's own wire already sends.
 const COMMAND_NAMES := {"vote": "vote"}
@@ -182,10 +193,11 @@ static func vote_rules() -> DotVoteRules:
 	var rules := DotVoteRules.new()
 	rules.enabled = true
 	rules.trigger = DotVoteRules.Trigger.TIME_LIMIT
-	# A mode is fifteen minutes rather than half an hour. A round here is a few minutes;
-	# a map limit that outlasted five of them would be a limit nobody ever saw fire.
-	rules.duration_sec = 900.0
-	rules.vote_lead_sec = 90.0
+	# A mode is half an hour rather than the forty-five minutes a map elsewhere gets. A
+	# round here is a few minutes; a limit that outlasted a dozen of them would be a limit
+	# nobody ever saw fire.
+	rules.duration_sec = 1800.0
+	rules.vote_lead_sec = 150.0
 	rules.vote_cooldown_sec = 60.0
 	rules.vote_duration_sec = 25.0
 	# Four modes with `include_current` off, so three others and an extend is exactly a
@@ -295,7 +307,18 @@ func setup(p_games: Object) -> DotResult:
 	director.player_count_fn = _player_count
 	director.is_admin_fn = _is_admin
 	director.announce_fn = func(line: String) -> void: announced.emit(line)
+	# Every round's end is reported (see _on_round_ended), so a time limit can wait for the
+	# round in progress under `time_up: finish_round`.
+	director.round_based = true
 	add_child(director)
+
+	feed = DotVoteBallotFeed.of(director, func(state: Dictionary) -> void:
+		if ballot_fn.is_valid():
+			ballot_fn.call(state)
+	)
+	feed.title = "Vote for the next mode"
+	feed.people_fn = func(voter: StringName) -> Dictionary:
+		return people_fn.call(voter) if people_fn.is_valid() else {}
 
 	director.change_due.connect(func(id: StringName, _choice: DotVoteChoice) -> void:
 		change_due.emit(id)
@@ -337,6 +360,9 @@ func advance(delta: float) -> void:
 	if director != null:
 		director.advance(delta)
 		_report_score()
+
+	if feed != null:
+		feed.poll()
 
 
 ## The leading score, once a tick and only when it moved.
@@ -410,7 +436,12 @@ func install_commands(host: Object) -> DotResult:
 
 		return &"console"
 
-	return commands.bind(host)
+	var bound := commands.bind(host)
+
+	if feed != null:
+		feed.command = commands.command_name("vote")
+
+	return bound
 
 
 ## What would play next with nobody voting.
