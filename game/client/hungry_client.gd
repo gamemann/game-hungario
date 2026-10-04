@@ -197,6 +197,7 @@ func _build_netcode() -> DotResult:
 	config.enable_lag_compensation = false
 	config.max_entities_per_snapshot = 120
 	config.world_extent = Dot2DNetSync.WORLD_EXTENT
+	config.reconcile_position_epsilon = HungryNetBridge.RECONCILE_EPSILON
 	net.config = config
 	add_child(net)
 

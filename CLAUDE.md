@@ -677,6 +677,7 @@ Every one of these parsed cleanly and none produced an error.
 - **No level section had ever driven what it arranged.** `_settle` returned with the round still in warmup whenever nobody had joined, and the first tick after a player did was the reset that respawned them. Three level checks passed only because of it — one had been rewritten to match the teleport, and one drove with a field the motor ignores. Found by the lagoon; described above.
 - **The food arithmetic for every level was backwards, and the check agreed with it.** The field refills what the cull takes, so a target is what stands on the floor; the slalom and the reef raised theirs as though the cull were a loss, and ran 27% and 4.5% richer than the squares they were built to match. Found by the lagoon, whose extra barrier doubled the reef's rock and made the number worth recomputing; described above.
 - **Split and eject were silent.** Both voices were baked and catalogued from the first commit and nothing played either; a netted split also played an eating blip, because the new piece's mass arrived before its parent's halving did. `HungryClient._watch_mass` hears both now, only after the player pressed the key, and `sandbox` drives them over the socket. A netted client also heard every throw on the map as its own, which offline never did.
+- **Every snapshot read as a correction (0.968), and the harness hid why (2026-10-04, `[hungario-corrections-1]`).** Three things. `HungryPieceNet._net_state_applied` moved the node to the snapshot on the owning client too, so `DotNetPredictor` captured "before" AFTER the rewind and measured the replay itself (one tick, 2.0 units) as the correction; it now skips a predicted entity, as every other game's player net does. dot-net's epsilon (0.01, in metres) is a hundredth of a pixel here, under the wire's 1/128 quantisation; `HungryNetBridge.RECONCILE_EPSILON` (0.5 px) is set on every `DotNetConfig` this game builds. And `headless_net` stamped `_tick + INPUT_LEAD` by hand over a clock it never advanced, so after dot-net b26b6d0 the catch-up jumped it a tick past what had been predicted every snapshot and the replay ran a tick twice: it now drives the clock like `HungryClient._physics_process` (`_client_step`), and a check compares tick N on both ends, which a client one tick ahead fails (median 2.04 against 0.04) and the correction rate cannot see. Its 0.032 before b26b6d0 measured nothing: a clock that never advanced replayed zero ticks. Also: GDScript evaluates `d[f()] = g()` with `g()` first, so `client_at[_client_step(c)] = centre()` recorded the position before the step.
 
 **In other projects, none of them reachable from that project's own suite:**
 
@@ -722,7 +723,7 @@ done
 
 godot --headless --path . res://examples/headless_round.tscn   # 437 — the game
 godot --headless --path . res://examples/headless_stack.tscn   #  24 checks
-godot --headless --path . res://examples/headless_net.tscn     # 158 — the netcode
+godot --headless --path . res://examples/headless_net.tscn     # 159 — the netcode
 godot --headless --path . res://examples/dedicated.tscn        # 208 — a real DotServer
 godot --headless --path . res://examples/sandbox.tscn          #  99 — two real clients
 godot --headless --path . res://examples/content.tscn          #  46 — the cloud path

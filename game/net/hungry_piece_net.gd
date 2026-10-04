@@ -207,9 +207,15 @@ func _net_state_applied(tick: int) -> void:
 			monster.blinded = net_blind
 			monster.beacon = net_beacon
 
+	# [b]Not on the owning client.[/b] There the node is where the prediction drew it, and
+	# [DotNetPredictor] measures a correction as how far reconciling moved it: moving it
+	# to the snapshot first made every reconcile measure the replay itself -- one tick of
+	# motion, 2.0 units -- as a correction, 0.968 of snapshots. The replay's own `pull`
+	# puts the node where the reconciled piece is. Every other game in the family has
+	# the same guard.
 	var node := identity.entity as Node2D if identity != null else null
 
-	if node != null:
+	if node != null and not identity.is_predicted():
 		node.position = piece.state.position
 
 

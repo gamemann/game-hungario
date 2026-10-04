@@ -14,6 +14,14 @@ const HungryProjectile := preload("../hungry_projectile.gd")
 const HungryRequest := preload("hungry_request.gd")
 const HungryWorld := preload("../hungry_world.gd")
 
+## How far a reconcile has to move the owning client's monster before dot-net counts it
+## as a correction, in [b]pixels[/b]. [member DotNetConfig.reconcile_position_epsilon]
+## defaults to 0.01, a centimetre in the 3D games it was written for and a hundredth of a
+## pixel here -- below the 1/128 the wire quantises a position to, so every replay from
+## a snapshot read as a correction (0.02 to 0.04 px apart). Half a pixel is the least a
+## screen can show. Every DotNetConfig this game builds sets it.
+const RECONCILE_EPSILON := 0.5
+
 ## Joins a [HungryWorld] to a [DotNetManager]. The netcode seam, and the only file in
 ## this project that names both.
 ##

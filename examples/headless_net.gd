@@ -36,7 +36,7 @@ const SNAPSHOT_RATE := 20
 const SEED := 20260828
 const CLIENT_PEER := 2
 
-const CHECKS := 158
+const CHECKS := 159
 
 var _passed := 0
 var _failed := 0
@@ -485,6 +485,7 @@ func _make_manager(server: bool, scope: StringName, peer_id: int) -> DotNetManag
 	config.enable_lag_compensation = false
 	config.max_entities_per_snapshot = 120
 	config.world_extent = Dot2DNetSync.WORLD_EXTENT
+	config.reconcile_position_epsilon = HungryNetBridge.RECONCILE_EPSILON
 	manager.config = config
 
 	add_child(manager)
@@ -644,13 +645,16 @@ func _flush() -> void:
 		_server_bridge.link.deliver(entry["method"], CLIENT_PEER, entry["payload"])
 
 
-## How far ahead of the server the client stamps its inputs.
+## How far ahead of the server the client stamps its inputs, roughly.
 ##
-## [b]Not a fudge factor.[/b] A command for tick N has to be in the server's hands
-## [i]before[/i] it simulates N, so a client running level with the server has every input
-## arrive one tick late — for ever, silently, with the only symptom a player who cannot
-## move. [DotNetClock] is what does this in a real deployment; here the harness does it by
-## hand because there is no clock to synchronise against.
+## [b]Not a fudge factor, and no longer the harness's to decide.[/b] A command for tick N
+## has to be in the server's hands [i]before[/i] it simulates N, and [DotNetClock] is what
+## puts it there: its input margin is two ticks over a link with no latency. The harness
+## used to stamp `_tick + INPUT_LEAD` by hand and never advanced the client's clock, so
+## the clock, synced once and then left standing, fell further behind every tick and
+## dot-net b26b6d0's catch-up jumped it on every snapshot -- to a tick this harness had not
+## predicted yet, which the replay then simulated and the next hand-stamped tick simulated
+## again. Each snapshot read as a correction (0.968) when the two simulations agreed.
 const INPUT_LEAD := 2
 
 ## One tick of both halves, with the wire drained in between.
@@ -658,10 +662,28 @@ func _step(command: Dot2DCommand = null) -> void:
 	_tick += 1
 	_server_bridge.server_tick(_tick)
 	_flush()
-	_client_bridge.client_tick(
-		_tick + INPUT_LEAD, command if command != null else Dot2DCommand.new()
-	)
+	_client_step(command)
 	_flush()
+
+
+## One tick of the client, driven the way [code]HungryClient._physics_process[/code] drives
+## it: the clock advances by a tick's worth of time, and every tick it moved through is
+## predicted and stamped from [method DotNetClock.input_tick] -- nothing until it is synced.
+## Returns the last tick predicted, or -1.
+func _client_step(command: Dot2DCommand = null) -> int:
+	var clock := _client_net.clock
+	var ticks := clock.advance(1.0 / float(TICK_RATE))
+	var last := -1
+
+	for i in range(ticks):
+		if not clock.is_synced():
+			continue
+		last = clock.input_tick() - (ticks - 1 - i)
+		_client_bridge.client_tick(
+			last, command if command != null else Dot2DCommand.new()
+		)
+
+	return last
 
 
 func _steps(count: int, command: Dot2DCommand = null) -> void:
@@ -828,7 +850,7 @@ func _test_prediction() -> void:
 	command.reach = 900.0
 
 	var before := _client_world.monster_for(7).centre()
-	_client_bridge.client_tick(_tick + INPUT_LEAD + 1, command)
+	_client_step(command)
 	var after := _client_world.monster_for(7).centre()
 
 	_check(
@@ -843,6 +865,37 @@ func _test_prediction() -> void:
 			_server_world.monster_for(7).centre()
 		) < 8.0,
 		"and stays with the server afterwards"
+	)
+
+	# [b]On the same tick, not merely close.[/b] The rate above cannot see a client a
+	# whole tick ahead of the server: an offset that never changes reconciles to itself
+	# and counts as no correction at all. That is what the hand-stamped harness had -- its
+	# replay ran one tick the next stamp ran again -- and it passed. Tick N on the client
+	# against tick N on the server; one tick of this monster's motion is 2 units.
+	var server_at := {}
+	var client_at := {}
+
+	for _i in range(30):
+		_tick += 1
+		_server_bridge.server_tick(_tick)
+		server_at[_tick] = _server_world.monster_for(7).centre()
+		_flush()
+		var predicted := _client_step(command)
+		client_at[predicted] = _client_world.monster_for(7).centre()
+		_flush()
+
+	var gaps: Array[float] = []
+
+	for tick: int in client_at.keys():
+		if server_at.has(tick):
+			gaps.append((client_at[tick] as Vector2).distance_to(server_at[tick] as Vector2))
+
+	gaps.sort()
+	var median := gaps[gaps.size() / 2] if not gaps.is_empty() else INF
+	_check(
+		gaps.size() >= 20 and median < 0.5,
+		"and predicts tick N where the server simulated tick N (median %.3f over %d ticks)"
+			% [median, gaps.size()]
 	)
 	_done()
 
@@ -997,8 +1050,8 @@ func _admin_window(ticks: int, command: Dot2DCommand) -> Dictionary:
 		_server_bridge.server_tick(_tick)
 		server_at[_tick] = _server_world.monster_for(7).centre()
 		_flush()
-		_client_bridge.client_tick(_tick + INPUT_LEAD, command)
-		client_at[_tick + INPUT_LEAD] = _client_world.monster_for(7).centre()
+		var predicted := _client_step(command)
+		client_at[predicted] = _client_world.monster_for(7).centre()
 		_flush()
 
 	var worst := 0.0
@@ -1916,8 +1969,8 @@ func _rock_window(world: HungryWorld, ticks: int, command: Dot2DCommand, rock: V
 				break
 
 		_flush()
-		_client_bridge.client_tick(_tick + INPUT_LEAD, command)
-		client_at[_tick + INPUT_LEAD] = _client_world.monster_for(7).centre()
+		var predicted := _client_step(command)
+		client_at[predicted] = _client_world.monster_for(7).centre()
 		_flush()
 
 	var worst := 0.0
