@@ -28,7 +28,7 @@ jobs:
     # @v1.2.1 (requires.json in the pack; a draft until every file is on it) until v1 is moved onto it.
     release:
         needs: validate
-        uses: modcommunity/dot-ci/.github/workflows/release.yml@v1.2.1
+        uses: modcommunity/dot-ci/.github/workflows/release.yml@v1.2.4
         permissions:
             contents: write
         with:
