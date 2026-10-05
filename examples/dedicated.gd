@@ -39,7 +39,7 @@ const SERVER_DIR := "user://hungry_dedicated"
 ## prints it to say which game this is, and nothing treats it as proof.
 const APP_URL := "hungario"
 
-const CHECKS := 208
+const CHECKS := 209
 
 var _passed := 0
 var _failed := 0
@@ -745,6 +745,10 @@ func _test_reporting() -> void:
 	_check(
 		String(report.get("map", "")) == String(_world().preset.id),
 		"and the mode as the map (%s)" % str(report.get("map", ""))
+	)
+	_check(
+		_server.games.reported_map() == String(_world().preset.id),
+		"and as the query's map, which A2S answers with (%s)" % _server.games.reported_map()
 	)
 
 	_check(module.roster_report().is_empty(), "the roster is empty with nobody on")

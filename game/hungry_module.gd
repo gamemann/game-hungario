@@ -169,6 +169,8 @@ func _module_load() -> DotResult:
 				% GAME_CLASSIC
 		)
 
+	_report_map(world)
+
 	var netted := _build_netcode()
 
 	if not netted.ok:
@@ -269,6 +271,19 @@ func _module_unload() -> void:
 		net.stop()
 
 
+## Tells dot-server which map this is, for the query's map field and the backbone report.
+##
+## The mode's preset, for the reason [method stats_report] gives: `hungry_frenzy` means
+## something to somebody reading a server browser, and the content id says only that it
+## is this repository.
+func _report_map(on: HungryWorld) -> void:
+	if server == null or server.games == null:
+		return
+	server.games.set_current_map(
+		String(on.preset.id) if on != null and on.preset != null else ""
+	)
+
+
 ## Rebinds onto the world the new mode brought with it.
 ##
 ## Called by [DotModuleHost] after [DotGameManager] has swapped the scene. The world is a
@@ -282,6 +297,10 @@ func _module_game_changed(content_key: String) -> void:
 		})
 		world = null
 		return
+
+	# Before the same-world check, not after it: the game manager forgets the map every
+	# time it unloads a scene, so this has to be said again on every change.
+	_report_map(next)
 
 	if next == world:
 		return
