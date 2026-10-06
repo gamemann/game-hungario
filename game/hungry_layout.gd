@@ -2006,6 +2006,16 @@ static func _fill(free: PackedByteArray, columns: int, rows: int, start: int, di
 ## the same thing about the same problem, and game-simple-lobby's furniture says it again.
 ##
 ## Returns true when it moved something, which is what a check can assert on.
+## How deep a circle at [param at] of [param radius] sits in the deepest rock it overlaps.
+## 0 when it touches none.
+func depth_in_rocks(at: Vector2, radius: float) -> float:
+	var deepest := 0.0
+	for block in blocks:
+		var depth := block.z + radius - at.distance_to(Vector2(block.x, block.y))
+		deepest = maxf(deepest, depth)
+	return deepest
+
+
 func resolve_circle(state: Dot2DState, radius: float) -> bool:
 	if state == null or blocks.is_empty():
 		return false

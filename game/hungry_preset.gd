@@ -48,6 +48,12 @@ const HungryPreset := preload("hungry_preset.gd")
 ## you, and therefore whether splitting to catch somebody is ever worth it.
 @export_range(0.0, 300.0, 0.5) var merge_delay_sec: float = 16.0
 
+## What a monster that has outgrown a refuge's room does: `accept` (it sits in the post until
+## its player splits or ejects; the den's price, Christian's pick), `cap` (food stops counting
+## while it is wedged), or `eject` (the excess is shed as food until it fits). See
+## [member HungryWorld.outgrown]; the server's `hungry_outgrown` overrides a mode's.
+@export_enum("accept", "cap", "eject") var outgrown: int = 0
+
 @export_group("Round")
 
 @export_range(0.0, 7200.0, 10.0) var time_limit_sec: float = 900.0

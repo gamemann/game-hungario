@@ -105,6 +105,14 @@ var arena: Dot2DArena = null
 ## hazard is placed at runtime and a layout is the map.
 var layout: HungryLayout = HungryLayout.none()
 
+## What a monster wedged in a refuge it has outgrown does (`[refuge-outgrown-1]`). Taken from
+## the preset on setup and changed live by the server's `hungry_outgrown`.
+enum Outgrown { ACCEPT, CAP, EJECT }
+var outgrown: int = Outgrown.ACCEPT
+
+## How deep into a rock counts as wedged, in units: less than this is a piece brushing one.
+const WEDGED_DEPTH := 1.0
+
 var field: HungryField = null
 var match_node: DotMatch = null
 var tunables: Dot2DTunables = null
@@ -173,6 +181,7 @@ func setup() -> DotResult:
 		return preset_valid
 
 	world_size = preset.world_size
+	outgrown = preset.outgrown
 
 	tunables = HungryContent.tunables()
 	tunables.max_speed = preset.max_speed
@@ -702,8 +711,70 @@ func _destroy_piece(piece: HungryPiece) -> void:
 ## two minutes and measuring the furthest edge, which came out 2.8 units past it. Nothing
 ## errored then either.
 func _grow(piece: HungryPiece, mass: float) -> void:
+	if outgrown == Outgrown.CAP and mass > piece.mass():
+		mass = _mass_that_fits(piece, mass)
+
 	piece.set_mass(mass, tunables.mass_rules)
 	piece.state.position = arena.clamp_position(piece.state.position, piece.radius())
+
+
+## How deep [param piece] would sit in a rock at [param mass], where it stands, after the
+## push-out and the arena clamp a tick would give it. 0 when it fits.
+func wedged_depth(piece: HungryPiece, mass: float = -1.0) -> float:
+	if layout == null or layout.is_empty():
+		return 0.0
+	var radius := piece.radius() if mass < 0.0 else tunables.mass_rules.radius_for(mass)
+	var probe := Dot2DState.new()
+	probe.position = piece.state.position
+	var _moved := layout.resolve_circle(probe, radius)
+	probe.position = arena.clamp_position(probe.position, radius)
+	return layout.depth_in_rocks(probe.position, radius)
+
+
+## `cap`: the most of [param wanted] the piece can have and still fit where it stands, or its
+## mass now if it is already wedged. Bisected, because growth is continuous and a piece in a
+## room is not.
+func _mass_that_fits(piece: HungryPiece, wanted: float) -> float:
+	var now := piece.mass()
+	if wedged_depth(piece, wanted) <= WEDGED_DEPTH:
+		return wanted
+	if wedged_depth(piece, now) > WEDGED_DEPTH:
+		return now
+	var low := now
+	var high := wanted
+	for i in 12:
+		var mid := (low + high) * 0.5
+		if wedged_depth(piece, mid) <= WEDGED_DEPTH:
+			low = mid
+		else:
+			high = mid
+	return low
+
+
+## `eject`: every wedged piece sheds what it cannot fit as food behind it, down to what
+## fits, a pellet's worth a tick so it reads as squeezing out rather than vanishing. On the
+## authority, after the moves.
+func _shed_outgrown() -> void:
+	if outgrown != Outgrown.EJECT or not is_authority or layout == null or layout.is_empty():
+		return
+
+	for piece: HungryPiece in _pieces.values():
+		if wedged_depth(piece) <= WEDGED_DEPTH or piece.mass() <= HungryContent.EJECT_MIN_MASS:
+			continue
+		# A pellet a tick for as long as it is wedged, not down to a size worked out once: a
+		# player steering into the corner stays wedged at a size that would fit standing
+		# still, and shedding stops only when it actually fits.
+		var shed := minf(HungryContent.EJECT_MASS, piece.mass() - HungryContent.EJECT_MIN_MASS)
+		if shed <= 0.0:
+			continue
+		_grow(piece, piece.mass() - shed)
+		var placed := field.plant(
+			arena.clamp_position(piece.position(), HungryContent.FOOD_TIER_RADIUS[HungryContent.EJECT_TIER]),
+			1, HungryContent.EJECT_TIER, arena.bounds)
+		for grid_id in placed:
+			arena.grid.place(grid_id, field.position_of(grid_id), field.radius_of(grid_id))
+		if not placed.is_empty():
+			field_changed.emit()
 
 
 ## Takes a piece out of the world because something that is not a player ate it.
@@ -1055,6 +1126,7 @@ func _simulate_monsters(commands: Dictionary, delta: float) -> void:
 		_separate(monster, delta)
 
 	motor.tunables = tunables
+	_shed_outgrown()
 
 
 ## Keeps a monster's own pieces from sitting inside each other before they may merge.

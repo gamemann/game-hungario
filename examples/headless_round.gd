@@ -38,7 +38,7 @@ const HungryWorld := preload("../game/hungry_world.gd")
 const SEED := 20260828
 const TICK_RATE := 60
 
-const CHECKS := 450
+const CHECKS := 453
 
 var _passed := 0
 var _failed := 0
@@ -3992,6 +3992,41 @@ func _test_the_rock_pools() -> void:
 	)
 	print("        outgrown: %.0f mass in a room holding %.0f overlaps the post by %.0f and stands %.1f past the wall"
 		% [monster.mass(), holds, og_overlap, og_past])
+
+	# --- The three rules a server can choose (`hungry_outgrown`) ----------------------
+	# accept is what was just measured. cap: in the same corner, fed the same, it stops
+	# growing where it would wedge. eject: grown wedged, it sheds food until it fits.
+	_check(world.outgrown == HungryWorld.Outgrown.ACCEPT and og_overlap > HungryWorld.WEDGED_DEPTH,
+		"accept, the default: the outgrown monster stays wedged in the post", "%.0f into it" % og_overlap)
+
+	world.outgrown = HungryWorld.Outgrown.CAP
+	world.spawn(1, og_corner)
+	world.tick({})
+	monster = world.monster_for(1)
+	world.feed_player(1, og_outgrown - monster.mass())
+	for _i in range(world.tick_rate / 2):
+		world.tick({1: _aim_at(monster.centre(), bounds.end)})
+	var capped_depth := world.wedged_depth(monster.pieces[0])
+	_check(monster.mass() < og_outgrown * 0.9 and capped_depth <= HungryWorld.WEDGED_DEPTH + 0.5,
+		"cap: fed the same, it stops growing where it would wedge",
+		"%.0f mass of %.0f fed, %.1f into the post" % [monster.mass(), og_outgrown, capped_depth])
+
+	world.outgrown = HungryWorld.Outgrown.ACCEPT
+	world.spawn(1, og_corner)
+	world.tick({})
+	monster = world.monster_for(1)
+	world.feed_player(1, og_outgrown - monster.mass())
+	world.tick({})
+	world.outgrown = HungryWorld.Outgrown.EJECT
+	var start_mass := monster.mass()
+	for _i in range(world.tick_rate * 4):
+		world.tick({1: _aim_at(monster.centre(), bounds.end)})
+	var ejected_depth := world.wedged_depth(monster.pieces[0])
+	_check(monster.mass() < start_mass and ejected_depth <= HungryWorld.WEDGED_DEPTH + 0.5,
+		"eject: grown wedged, it sheds the excess until it fits",
+		"%.0f mass from %.0f, %.1f into the post" % [monster.mass(), start_mass, ejected_depth])
+	print("        outgrown rules: cap holds it at %.0f mass; eject sheds it from %.0f to %.0f" % [world.monster_for(1).mass(), start_mass, monster.mass()])
+	world.outgrown = HungryWorld.Outgrown.ACCEPT
 
 	_drop(world)
 	_done()

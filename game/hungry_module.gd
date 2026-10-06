@@ -1593,6 +1593,19 @@ func _register_console() -> void:
 		"hungry_hazards_count", "0", "Rocks scattered into the arena at load"
 	)
 
+	# What a monster that has outgrown a refuge does: accept (the default and the mode's
+	# usual), cap or eject. Empty leaves the mode's own. Live: it applies from the next tick.
+	var outgrown := add_cvar("hungry_outgrown", "",
+		"A monster wedged in a refuge it outgrew: accept, cap (food stops counting) or eject (sheds the excess). Empty: the mode's.",
+		DotConVar.FLAG_NOTIFY)
+	outgrown.changed.connect(func(_old: String, value: String) -> void:
+		var rule := ["accept", "cap", "eject"].find(value.strip_edges().to_lower())
+		if world != null and rule >= 0:
+			world.outgrown = rule
+		elif world != null and value.strip_edges() == "":
+			world.outgrown = world.preset.outgrown if world.preset != null else 0
+	)
+
 	# Registered whether or not hunters are on, so a config that sets them does not
 	# depend on the order it turns things on in.
 	npc_skill.bind_cvars(add_cvar, DotConVar.FLAG_NOTIFY)
