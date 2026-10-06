@@ -20,8 +20,9 @@ const HungryLayout := preload("hungry_layout.gd")
 ## - **dot-npc-ai** is the decision: a state machine, a wander that wanders rather than
 ##   re-rolling, separation so a pack at one player does not become a tower, and the arena
 ##   shooters' characteristics — a reaction time, so a hunter cannot commit on the tick
-##   it first sees you. There is no difficulty setting; the character is the difficulty,
-##   per hunter.
+##   it first sees you. The character is the difficulty, per kind (`skill` in the
+##   catalogue); `npc_skill` and `npc_reaction_scale` move every kind at once without
+##   making them the same.
 ## - **dot-npc-ai-director** decides *when*. Hunters do not arrive on a timer: the director
 ##   builds up, sustains, fades and relaxes against an estimate of what the players are
 ##   experiencing, which in this game is being chased rather than being shot.
@@ -79,6 +80,10 @@ signal piece_hunted(player_id: int, mass: float)
 
 
 var spawner: DotNpcSpawner = null
+
+## How good the hunters are, server-wide. Handed in by the module, which owns the cvars;
+## attached to the spawner before the first hunter thinks. Null leaves them as authored.
+var npc_skill: DotNpcAiSkill = null
 var director: DotNpcDirector = null
 
 ## The world this hunts in. Set before [method setup].
@@ -125,15 +130,15 @@ static func catalogue() -> DotNpcCatalogue:
 
 	# Small, fast, and only a threat to somebody who has just spawned or just split. The
 	# thing that makes splitting a commitment rather than a free move.
-	_add(out, &"swarmling", "Swarmling", 45.0, 320.0, 900.0, 1, 30.0)
+	_add(out, &"swarmling", "Swarmling", 45.0, 320.0, 900.0, 1, 30.0, "normal")
 
 	# The middle one. Fast enough to catch a careless player and small enough to be worth
 	# eating, which is what makes hunting them a strategy rather than a hazard.
-	_add(out, &"stalker", "Stalker", 220.0, 240.0, 1400.0, 3, 90.0)
+	_add(out, &"stalker", "Stalker", 220.0, 240.0, 1400.0, 3, 90.0, "hard")
 
 	# Slow and enormous. Nothing about outrunning it is hard; the problem is that it is
 	# sitting on the food.
-	_add(out, &"lurker", "Lurker", 900.0, 120.0, 1100.0, 8, 220.0)
+	_add(out, &"lurker", "Lurker", 900.0, 120.0, 1100.0, 8, 220.0, "easy")
 
 	return out
 
@@ -146,7 +151,8 @@ static func _add(
 	speed: float,
 	sight: float,
 	cost: int,
-	health: float
+	health: float,
+	skill: String
 ) -> void:
 	var def := DotNpcDef.make(id, HUNTER_SCENE)
 	def.display_name = display
@@ -164,7 +170,12 @@ static func _add(
 	# that a decision rather than a fallback nobody noticed. This arena has no walls, so
 	# there is nothing to be occluded by in any case.
 	def.require_line_of_sight = false
-	def.meta = {"mass": mass, "speed": speed}
+	# `skill` names the hunter's character — dot-npc-ai's brain reads it from here. Until
+	# this was added no hunter had one, so `has_reacted()` answered true on the tick a
+	# hunter first saw somebody: the reaction time this file's header promised was zero.
+	# The stalker is the sharp one and the lurker is slow to notice, which is the trade
+	# its size already makes.
+	def.meta = {"mass": mass, "speed": speed, "skill": skill}
 	into.add(def)
 
 
@@ -266,6 +277,8 @@ func setup(p_authoritative: bool, p_world: HungryWorld) -> DotResult:
 	# so a target that has moved a little is still steered at where it is.
 	spawner.repath_drift = NAV_SPACING * 3.0
 	spawner.repath_interval = 1.0
+	if npc_skill != null:
+		npc_skill.attach(spawner)
 	add_child(spawner)
 
 	spawner.spawned.connect(_on_spawned)

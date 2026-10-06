@@ -92,6 +92,11 @@ var mod_commands: DotModToolCommands = null
 ## NPC monsters, and the director that decides when they arrive.
 var hunters: HungryHunters = null
 
+## How good the hunters are, server-wide: `npc_skill`, `npc_reaction_scale`,
+## `npc_reaction_min`. Here rather than on [member hunters] because the console is
+## registered before the hunters are built, and the value has to be there to hand them.
+var npc_skill: DotNpcAiSkill = DotNpcAiSkill.new()
+
 ## Rocks, spikes and lures.
 var hazards: HungryHazards = null
 
@@ -502,6 +507,7 @@ func _build_combat() -> DotResult:
 func _build_hunters() -> DotResult:
 	hunters = HungryHunters.new()
 	hunters.name = "Hunters"
+	hunters.npc_skill = npc_skill
 	add_child(hunters)
 
 	var ready := hunters.setup(true, world)
@@ -1586,6 +1592,10 @@ func _register_console() -> void:
 	_cv_hazards = add_cvar(
 		"hungry_hazards_count", "0", "Rocks scattered into the arena at load"
 	)
+
+	# Registered whether or not hunters are on, so a config that sets them does not
+	# depend on the order it turns things on in.
+	npc_skill.bind_cvars(add_cvar, DotConVar.FLAG_NOTIFY)
 
 	# Where this server's rider cosmetics live. Empty means "whatever the client shipped
 	# with", which is every deployment that has not published a pack — and a client with

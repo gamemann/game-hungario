@@ -419,8 +419,7 @@ here for the half this game would otherwise get wrong.
 - **dot-npc-ai** is the decision: a state machine (three states, so a tree would be three
   leaves under a selector pretending to be a hierarchy), a wander that wanders rather than
   re-rolling, separation so a pack at one player does not become a tower, and a **reaction
-  time** so a hunter cannot commit on the tick it first sees you. There is no difficulty
-  setting; the character is the difficulty, per hunter.
+  time** so a hunter cannot commit on the tick it first sees you. The character is the difficulty, per kind (`skill` in the catalogue: swarmling normal, stalker hard, lurker easy), and `npc_skill` / `npc_reaction_scale` / `npc_reaction_min` move every kind at once. **Until 2026-10-05 no hunter had a character at all**, so `has_reacted()` answered true on the first tick and the reaction time this paragraph promised was zero.
 - **dot-npc-ai-director** decides *when*. Hunters do not arrive on a timer: it builds up,
   sustains, fades and relaxes against an estimate of what the players are experiencing —
   which in this game is **how close the nearest hunter that could actually eat them is**,
