@@ -4,8 +4,6 @@ This is a game to demonstrate the capabilities of the [**Dot collection**](https
 
 *Play on my test server [here](https://moddingcommunity.com/hungario/s/hungario01/play)!*
 
-The **Dot** collection is a set of open source Godot 4 assets that provide modular building blocks for games and applications in the TMC ecosystem, covering core functionality, networking, authentication, cloud integration, and more. This project is built out of them, so it doubles as a worked example of what they look like in a real game rather than in a demo.
-
 **This project and the assets under it are COMPLETELY OPEN SOURCE**. You are free to use, modify, and distribute them under the terms of the MIT license. The only thing not open source is the back-end web infrastructure. So if you opt into using your own authentication backend instead of integrating with TMC, you will need to build and integrate your own back-end infrastructure.
 
 ## From Maintainer & WARNING
@@ -15,146 +13,143 @@ This project, along with every asset it is built on, was built initially with **
 
 I intend on reviewing code, testing, and editing documentation regularly. If you're interested in helping out, please let me know!
 
-## An Arena Game Built Out of `dot-*`
-An agar.io-shaped game where the thing you steer is a monster and the thing riding it is your avatar. Built out of the [dot-*](https://github.com/modcommunity) family, and meant to be played from a link.
+## How it plays
+Your mass is your size, your speed and your score. The bigger you are, the slower you move: twice the mass is about 26% slower. Your avatar rides on top of your monster.
+
+- **Eating.** You can eat a monster that is at least a quarter smaller than you once you are properly on top of it. Every monster has a ring: green if you can eat it, red if it can eat you.
+- **Food** comes in four sizes. The big pieces are rare, so the fastest way to grow is eating other players.
+- **Fruit** gives you eight seconds of something: *rush* (faster), *maw* (eat players closer to your size) or *rind* (absorbs one burst).
+- **Throwables** are picked up off the ground. A *pepper* bursts whoever it hits into five pieces, a *frostberry* slows them, and a *lure* drops a ring of food where it lands.
+- **Splitting** throws half of you forward to catch someone. Your pieces can't merge for sixteen seconds, so each one is easier to eat.
+- **Ejecting** spits out a little mass to make you smaller and faster.
+- **Loadout.** Before you spawn, pick a starting throwable and a trait: *nimble* (faster, smaller start), *sturdy* (bigger start, slower) or *greedy* (more from food, smaller start).
+
+Mass above 260 slowly decays, so you can't just park in a corner. When you are eaten, you watch whoever ate you until you respawn.
+
+There are six modes:
+
+| Mode | |
+| --- | --- |
+| Classic | The standard square arena. |
+| Frenzy | Small, fast and over quickly. |
+| Gauntlet | A long, narrow corridor. |
+| Warrens | A square with rocks and refuges in it. |
+| Reef | A wall with four channels through it, tight at one end and open at the other. |
+| Shallows | Lines of posts whose gaps narrow the further in you go, so only small monsters reach the middle. |
+
+## Controls
+
+| Key | Action |
+| --- | --- |
+| **Mouse** | Steer. The further the cursor, the faster you go. Put it on yourself to pull your pieces back together |
+| **Space** | Split |
+| **W** | Eject mass |
+| **Q** | Throw what you are holding |
+| **Tab** | Leaderboard |
+| **Y** / **U** | Chat / chat with nearby players |
+| **Esc** | Menu, settings and loadout |
+
+On a phone, drag to steer, and there are buttons for split and throw.
+
+## Getting started
+You need [Godot 4.7](https://godotengine.org/download). The game is built from many Dot addons, each in its own repository, so the easiest way to get everything is [dot-bootstrap](https://github.com/modcommunity/dot-bootstrap). It clones every project and links the addons into each one:
 
 ```bash
-godot --path .                                       # the launcher
-godot --path . -- --offline                          # bots, no server needed
-godot --headless --path . res://examples/dedicated.tscn -- --serve
+git clone https://github.com/modcommunity/dot-bootstrap.git
+cd dot-bootstrap
+./bootstrap.sh
+cd projects/game-hungario
+./game.sh
 ```
 
-Mouse steers: near is slow, far is full speed. **Space** splits, **W** ejects, **Q** throws, **Tab** is the board, **Enter** is chat, **Escape** is the menu and your loadout. On a phone, a drag steers and there are two buttons.
+On Windows, run `bootstrap.ps1` instead and open the project in Godot.
 
-## What it is made of
+`game.sh` does everything else:
 
-| | |
+| Command | What it does |
 | --- | --- |
-| [dot-core](https://github.com/modcommunity/dot-core) | Everything shared. |
-| [dot-2d](https://github.com/modcommunity/dot-2d) | Movement, mass rules, the spatial hash, the deterministic food fields. |
-| [dot-net](https://github.com/modcommunity/dot-net) | Tick sync, snapshots, interpolation, prediction, interest management. |
-| [dot-server](https://github.com/modcommunity/dot-server) | The dedicated server, chat, votes, and switching modes under live players. |
-| [dot-match](https://github.com/modcommunity/dot-match) | Rounds, the scoreboard, respawning. |
-| [dot-ui](https://github.com/modcommunity/dot-ui) | Mass readout, leaderboard, feed, minimap, menus, key bindings. |
-| [dot-user-avatar](https://github.com/modcommunity/dot-user-avatar) | The rider: an avatar as a document a server checks without loading art. |
-| [dot-loadout](https://github.com/modcommunity/dot-loadout) | Throwables and traits, as data a server validates without loading any of it. |
-| [dot-platform](https://github.com/modcommunity/dot-platform) | Identity, profile and avatar joined into one admission. |
-| [dot-cloud](https://github.com/modcommunity/dot-cloud) | Signed, versioned delivery of the rider's parts. |
-| [dot-auth](https://github.com/modcommunity/dot-auth) · [dot-user](https://github.com/modcommunity/dot-user) | Underneath dot-platform: who you are, and the profile that follows you. |
-| [dot-serve](https://github.com/modcommunity/dot-serve) | Starting a server. |
+| `./game.sh` | Open the launcher. Pass `-- --offline` to play against bots |
+| `./game.sh online` | Start a local server (Classic) and the browser client, and print the link to open |
+| `./game.sh online hungry_reef` | The same, in another mode (`hungry_frenzy`, `hungry_gauntlet`, `hungry_warrens`, `hungry_reef`) |
+| `./game.sh online down` | Stop them |
+| `./game.sh server` | Start a local dedicated server only |
+| `./game.sh test` | Check every script and run every test suite |
+| `./game.sh help` | All of the options |
 
-## The rules
+`online` and `server` use [dot-server-deploy](https://github.com/modcommunity/dot-server-deploy), which bootstrap clones next to this one. Run its `./setup.sh` once first.
 
-Your mass is your size, your speed and your score, and they trade against each other: twice the mass is **√2** the width and about **26% less** speed. That single relationship is the whole balance. It is what makes two small monsters worth the same area as one big one, and why being biggest is not simply winning.
+## Running a server
+Settings are cvars. Set them in the server's config, on the command line, or live from the console. `cvarlist hungry_` lists them all.
 
-**Eating needs a ratio and an overlap.** You have to be a quarter bigger *and* properly on top of them.
-
-**Food comes in four sizes**, crumb, morsel, chunk and haunch, and the big ones are rare. The win target is roughly seven hundred average pieces, which nobody reaches by grazing. Getting there means eating players.
-
-**Fruit is rare and does something for eight seconds.** *Rush* makes you faster, *maw* lowers the ratio you need to eat somebody, *rind* absorbs one burst.
-
-**Throwables are picked up off the ground.** A *pepper* bursts whoever it hits into five pieces, which is how a small monster turns an unwinnable fight into several winnable ones. A *frostberry* slows them. A *lure* plants a ring of food where it lands, which is worth a lot to whoever gets there first and is a very visible advertisement of where you are.
-
-**Splitting throws half of you forward.** It is how a big monster catches a small one, and it is a risk: the pieces cannot merge for sixteen seconds and each of them is individually smaller than you were. Bursting is the same thing done to you against your will.
-
-**Every monster is ringed by what it means to you**: green if you could eat it, red if it could eat you, nothing if neither. Eating needs a *quarter* more mass, which is about 12% more width, and nobody judges that by eye while being chased.
-
-**Let go of the mouse to gather.** Every piece steers toward the cursor's point, so putting the cursor on yourself pulls your pieces back together.
-
-**Eject to get smaller on purpose.** W spits a blob of mass out in front of you, worth slightly less than it cost. Being smaller is being faster, harder to corner, and able to fit through a gap between two things that could eat you, and the blob is ordinary food that anybody can take, including whoever is chasing you.
-
-**Pick a loadout before you spawn.** A starting throwable, and one of three traits: *nimble* (faster, smaller start), *sturdy* (bigger start, slower) or *greedy* (more from every piece of food, smaller start). Every one is a trade, and the server checks the choice against what you have unlocked.
-
-Mass above 260 decays at a fifth of a percent a second. A player who is still eating never notices; a player who has parked in a corner does.
-
-## Your avatar rides the monster
-
-The rider on top of your monster is a **dot-user-avatar document**: a handful of ids and colours the server validates against a schema and an entitlement set **without loading any art at all**. That is what makes it possible for a dedicated server to say no to a cosmetic it has never seen.
-
-The parts themselves come from a **signed dot-cloud pack** when a server has published one, from the build when it has not, and are drawn from their id and colours when there is neither. That order is deliberate: downloadable cosmetics are an upgrade, not a requirement, and a player you cannot see is a competitive advantage.
-
-```bash
-godot --headless --path . res://tools/publish_avatars.tscn      # sign and package
-godot --headless --path . res://examples/content.tscn           # publish, fetch, mount, wear
+```
+hungry_bots 8                 // keep this many bots in the world
+hungry_hunters_on 0           // release NPC hunters into the arena
+hungry_hazards_count 0        // rocks scattered into the arena at load
+hungry_outgrown ""            // a monster stuck in a refuge it outgrew: accept, cap or eject (empty: the mode's own)
+hungry_avatar_pack ""         // manifest URL for this server's rider content
 ```
 
-## Where dot-2d stops and this starts
+Console commands:
 
-dot-2d ships the motor, the mass relationships, the spatial hash and the deterministic scatter field, and **deliberately stops short of splitting and merging**, because split pieces are several entities owned by one player, which needs an ownership model and a merge rule that are a game's design rather than a library's.
-
-`HungryMonster` is that ownership model: a player is a *set* of pieces. Your mass is the sum, your position is the mass-weighted centroid, your rider sits on the biggest piece, and you are dead when the last one is eaten. `HungryWorld` is the rest: eating, splitting, bursting, merging, throwables, and the bookkeeping that keeps the spatial hash agreeing with the world.
-
-The one thing that had to change in the *shape* of dot-2d's command to make a multi-piece game work is described under "A player is a set, and the pointer is a point" in [CLAUDE.md](CLAUDE.md). Short version: every piece steers toward the cursor's point rather than along one shared direction, or a split monster can never rejoin.
-
-## When you are eaten
-
-You watch whoever ate you until you respawn, or the leader if they have been eaten too. A camera left where you died is a black rectangle while the fight that killed you carries on somewhere else.
-
-## Settings
-
-Volume, camera smoothing, zoom-with-size, the minimap, names, the feed and the threat rings, from the pause menu. They are written to `user://cfg/hungry.json` and survive a restart.
-
-The screen has no layout code: `DotSettingsPanel` builds the editors from the config's own `@export` annotations, so a setting added to `HungryConfig` appears there and nothing else changes.
-
-## Multiplayer
-
-Everything here is server-authoritative. Clients send inputs, never state.
-
-- **Eleven hundred pieces of food are never replicated.** They are placed by a hash of (seed, index), so a client lays the whole field out from one integer; what travels is which slots have been eaten.
-- **Each piece is a replicated entity**, interest-managed from the monster's centroid, so a client is told about what is on its screen and nothing else. Data never sent cannot be drawn on a wallhack.
-- **Your own monster is predicted** and reconciled against the server, so it moves on the tick you press rather than a round trip later.
-- **No audio files either.** The fifteen sounds are generated at startup from a sweep, a noise component and an envelope, so the game makes noise without anybody producing a WAV.
-- **The server can change mode with everybody still connected.** `changegame frenzy`.
-
-## Playing it in a browser
-
-See [web/README.md](web/README.md). Short version: the server listens on **WebSocket** because a browser has no UDP and Godot's web template does not ship ENet at all; the web build is a **client** because a tab cannot listen; and the page needs `wss://` because an HTTPS page may not open an insecure socket.
-
-`web/embed.html` takes the server from the query string, so one export serves every server.
-
-## Server console
-
-| | |
+| Command | |
 | --- | --- |
-| `hungry_bots <n>` | Keep this many bots in the world. |
-| `hungry_loadouts` | What everybody brought in. |
-| `hungry_avatar_pack <url>` | Where this server's rider content lives. |
-| `hungry_status` | The world, the field and the netcode. |
-| `hungry_top` | The leaderboard. Usable from chat. |
-| `hungry_net` | Snapshot rates, bandwidth, clock, link counters. |
-| `hungry_restart` | Restart the round. |
-| `hungry_give <player> <pepper\|frost\|lure>` | Hand somebody a throwable. Cheat-flagged. |
-| `hungry_burst <player>` | Blow somebody apart. Cheat-flagged. |
-| `changegame hungry_frenzy` | Switch mode without dropping anybody. |
-| `votemap hungry_frenzy` | Let the players decide. dot-server's own, no code here. |
+| `hungry_status` | The world, the food and the network |
+| `hungry_top` | The leaderboard (also works in chat) |
+| `hungry_restart` | Restart the round |
+| `hungry_loadouts` | What everybody brought in |
+| `hungry_hunters [on\|off\|clear]` | The NPC hunters |
+| `hungry_hazards [scatter <n>\|clear]` | Rocks, spikes and lures |
+| `hungry_give <player> <pepper\|frost\|lure>` | Give somebody a throwable (needs `cheats`) |
+| `hungry_burst <player>` | Blow somebody apart (needs `cheats`) |
+| `changegame hungry_frenzy` | Switch mode without dropping anybody |
+| `votemap hungry_frenzy` | Let the players vote on it |
 
-A moderator's live tools are [dot-moderation](https://github.com/modcommunity/dot-moderation)'s, and `modtools` lists what this game supports. Among them, `blind <player> [on|off|seconds]` blacks out that player's own screen and nobody else's, and `beacon <player> [on|off]` rings their monster on every screen, points at it from the edge when it is off screen, and pings once a second. Both outlive being eaten; noclip and freeze do not.
+### Admin commands
+These come from [dot-moderation](https://github.com/modcommunity/dot-moderation), and `modtools` lists what this game supports. `blind <player> [on|off|seconds]` blacks out that player's screen, and `beacon <player> [on|off]` rings their monster on every screen and pings once a second. Both last through being eaten.
 
-## Configuring the mode vote
-
-The vote for the next mode is [dot-vote](https://github.com/modcommunity/dot-vote), and the rules in `game/hungry_maps.gd` are only this game's defaults. A server owner overrides any of dot-vote's settings without touching code, in `user://cfg/hungry_vote.json`, then `DOT_VOTE_*`, then `--vote-*` — later wins. A file that does not validate is refused whole and the defaults stand, with the reason in the log.
-
-The end-of-mode vote and the option to extend the current mode:
+### The mode vote
+The vote for the next mode is [dot-vote](https://github.com/modcommunity/dot-vote). The defaults are in `game/hungry_maps.gd`. To change them, put a file at `user://cfg/hungry_vote.json` (or use `DOT_VOTE_*` environment variables, or `--vote-*` arguments):
 
 ```json
 { "end_vote": true, "vote_lead_sec": 120, "include_extend": true, "extend_seconds": 300, "max_extends": 2 }
 ```
 
-`end_vote: false` turns the end-of-mode ballot off (the mode still ends, on the rotation); `include_extend: false` takes "extend" off the ballot; `extend_seconds` is how much one extension adds and `max_extends` how many there may be. Every setting is in dot-vote's README, and its `docs/parity.md` maps the long-standing community map-chooser plugins' settings onto them.
+`end_vote: false` turns the end-of-mode vote off, and `include_extend: false` takes "extend" off the ballot. dot-vote's README lists every setting.
 
-## Validating changes
+### Player settings
+Volume, camera smoothing, zoom, the minimap, names, the kill feed and the threat rings are in the pause menu. They are saved to `user://cfg/hungry.json`.
+
+## Rider avatars
+The rider on your monster is your avatar from the platform. Its parts come from a signed content pack when the server has one, from the game itself when it doesn't, and are drawn from their colours when there is neither. To build and publish an avatar pack:
 
 ```bash
-godot --headless --path . res://examples/headless_round.tscn   # 286 checks, the game
-godot --headless --path . res://examples/headless_net.tscn     # 149 checks, the netcode
-godot --headless --path . res://examples/dedicated.tscn        # 202 checks, a real DotServer
-godot --headless --path . res://examples/headless_presentation.tscn  # 80 checks, the client half
-godot --headless --path . res://examples/sandbox.tscn          #  99 checks, two real clients
-godot --headless --path . res://examples/content.tscn          #  46 checks, the cloud path
+godot --headless --path . res://tools/publish_avatars.tscn
 ```
 
-Each exits non-zero on failure. See [CLAUDE.md](CLAUDE.md) for the setup and for what each one is actually checking.
+## Playing in a browser
+[web/README.md](web/README.md) explains the browser build. In short, the server has to listen on WebSocket (browsers have no UDP), and an HTTPS page needs a `wss://` address.
 
-## Licence
+## Testing
 
+```bash
+./game.sh test                    # every script parses, then every suite runs
+./game.sh test headless_round     # one suite
+```
+
+| Suite | What it covers |
+| --- | --- |
+| `headless_round` | The game itself: eating, splitting, throwables, modes, a whole round |
+| `headless_net` | A server and a client in one process, over the network code |
+| `headless_presentation` | What a client draws and plays |
+| `headless_stack` | The whole stack of addons together |
+| `content` | Publishing, fetching and wearing an avatar pack |
+| `sandbox` | Two real clients on a real server |
+| `dedicated` | A real server: boots, loads the game, runs its commands |
+
+[`CLAUDE.md`](CLAUDE.md) has the design decisions and the reasoning behind them.
+
+## Credits
+There are no audio files: every sound is generated when the game starts.
+
+## License
 MIT. See [LICENSE](LICENSE).
