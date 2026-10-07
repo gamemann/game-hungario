@@ -135,9 +135,15 @@ static func none() -> HungryLayout:
 ## one that hangs half outside the wall. `gauntlet` is the reminder that world size here is
 ## not a constant.
 static func for_id(layout_id: StringName, bounds: Rect2) -> HungryLayout:
-	match layout_id:
+	# `<layout>:<variant>`: the variant rides in the same string the hello already carries,
+	# so a client builds exactly the rocks its server has. See [method variant_of].
+	var base := base_of(layout_id)
+
+	match base:
 		WARRENS:
-			return _warrens(bounds)
+			var built := _warrens(bounds, variant_of(layout_id))
+			built.id = layout_id
+			return built
 		SLALOM:
 			return _slalom(bounds)
 		REEF:
@@ -146,6 +152,30 @@ static func for_id(layout_id: StringName, bounds: Rect2) -> HungryLayout:
 			return _shallows(bounds)
 		_:
 			return none()
+
+
+# --- variants --------------------------------------------------------------
+
+## The layout a `<layout>:<variant>` id names.
+static func base_of(layout_id: StringName) -> StringName:
+	var text := String(layout_id)
+	var colon := text.find(":")
+	return StringName(text.substr(0, colon)) if colon >= 0 else layout_id
+
+
+## The variant a `<layout>:<variant>` id names, or "" for the layout's default.
+static func variant_of(layout_id: StringName) -> String:
+	var text := String(layout_id)
+	var colon := text.find(":")
+	return text.substr(colon + 1).strip_edges().to_lower() if colon >= 0 else ""
+
+
+## A layout id with [param variant] applied: the default spelled plainly, anything else as
+## `<layout>:<variant>`.
+static func with_variant(layout_id: StringName, variant: String) -> StringName:
+	var base := base_of(layout_id)
+	var v := variant.strip_edges().to_lower()
+	return base if v == "" else StringName("%s:%s" % [base, v])
 
 
 # --- warrens ---------------------------------------------------------------
@@ -160,9 +190,29 @@ const RING_RADIUS := 0.124
 ## being locked out of the middle is a detour rather than a wall.
 const RING_COUNT := 8
 
-## The corner cover: one rock per quadrant, on the diagonal.
-const CORNER_AT := 0.657
-const CORNER_RADIUS := 0.114
+## The corner cover: one rock per quadrant, as layout data. A variant is
+## `[distance out along each axis, radius]`, both as fractions of the smaller half-extent.
+##
+## [b]`open` is the default since 2026-10-07[/b] (Christian's call): each rock stands
+## against a wall, a pinwheel round the arena, so the lane goes round its inner side —
+## about 700 wide at `warrens`' size against a winning monster's 640, on both sides of it.
+## Touching the wall (a hundredth of a unit into it, so the gap to the wall is closed
+## rather than a gate a millimetre wide — not crossing it, which would push a player
+## through the boundary) and not in the corner, because a rock touching both walls seals
+## the floor behind it. It is still cover to break a line along a wall and to be
+## cornered against.
+##
+## [b]`quartered` is the original[/b]: a rock on the diagonal 481 off each wall at
+## `warrens`' size, which shuts anything over about 903 mass (radius 240) into one quarter
+## of the lane. Kept selectable (`hungry_warrens_corners quartered`) rather than deleted:
+## a server that wants a leader to have to split to get round is choosing a harder mode,
+## not a bug. A rock that small and still on the diagonal cannot do both — leaving 680 on
+## each side of it needs a radius of about 40.
+const CORNER_VARIANTS := {
+	"open": {"shape": "wall", "along": 0.575, "radius": 0.09},
+	"quartered": {"shape": "diagonal", "at": 0.657, "radius": 0.114},
+}
+const CORNER_DEFAULT := "open"
 
 ## The den: how many rocks, how far out, and how big, same fraction as the ring.
 ##
@@ -196,7 +246,7 @@ const DEN_RADIUS := 0.065
 ## decided by speed again. One rock per quadrant is something to break a line of sight
 ## against and something to be cornered against, and it is deliberately not big enough to
 ## hide behind for ever.
-static func _warrens(bounds: Rect2) -> HungryLayout:
+static func _warrens(bounds: Rect2, variant: String = "") -> HungryLayout:
 	var out := HungryLayout.new()
 	out.id = WARRENS
 
@@ -223,14 +273,24 @@ static func _warrens(bounds: Rect2) -> HungryLayout:
 
 	out.rings.append(Vector2i(0, RING_COUNT))
 
-	var corner_at := half * CORNER_AT
-	var corner_radius := half * CORNER_RADIUS
+	var corners: Dictionary = CORNER_VARIANTS.get(variant, CORNER_VARIANTS[CORNER_DEFAULT])
+	var corner_radius := half * float(corners["radius"])
 
-	for sx in [-1.0, 1.0]:
-		for sy in [-1.0, 1.0]:
-			out.blocks.append(Vector3(
-				centre.x + sx * corner_at, centre.y + sy * corner_at, corner_radius
-			))
+	if str(corners["shape"]) == "wall":
+		# A pinwheel: each quadrant's rock is the last one turned a quarter, so every
+		# corner plays the same and none is the safe one. Written out rather than rotated:
+		# a rotation's rounding would leave a gap to the wall a hair wide, which is a gate.
+		var along := half * float(corners["along"])
+		var off := half - corner_radius + 0.01
+		for p: Vector2 in [Vector2(off, -along), Vector2(along, off), Vector2(-off, along), Vector2(-along, -off)]:
+			out.blocks.append(Vector3(centre.x + p.x, centre.y + p.y, corner_radius))
+	else:
+		var corner_at := half * float(corners["at"])
+		for sx in [-1.0, 1.0]:
+			for sy in [-1.0, 1.0]:
+				out.blocks.append(Vector3(
+					centre.x + sx * corner_at, centre.y + sy * corner_at, corner_radius
+				))
 
 	# [b]The den, appended LAST[/b], so the ring is still blocks 0-7 and the corners 8-11
 	# for everything that was written against the warrens before it had a middle's middle.
@@ -1377,10 +1437,14 @@ func narrowest_gate(bounds: Rect2) -> float:
 	var narrowest := narrowest_gap()
 
 	for block in blocks:
-		narrowest = minf(narrowest, block.x - bounds.position.x - block.z)
-		narrowest = minf(narrowest, bounds.end.x - block.x - block.z)
-		narrowest = minf(narrowest, block.y - bounds.position.y - block.z)
-		narrowest = minf(narrowest, bounds.end.y - block.y - block.z)
+		# A rock touching a wall closes that side: it is no gate at all, the same rule
+		# [method gates] keeps (`width <= 0` is skipped). The warrens' open corners do this.
+		for side in [
+			block.x - bounds.position.x - block.z, bounds.end.x - block.x - block.z,
+			block.y - bounds.position.y - block.z, bounds.end.y - block.y - block.z,
+		]:
+			if side > 0.0:
+				narrowest = minf(narrowest, side)
 
 	return narrowest
 

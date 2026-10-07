@@ -514,7 +514,8 @@ static func nav_for(layout: HungryLayout, bounds: Rect2) -> DotNpcNavData:
 		return null
 
 	var data := DotNpcNavData.new()
-	data.map_id = StringName("hungry_%s" % String(layout.id))
+	# A variant's colon is not a file-name character everywhere.
+	data.map_id = StringName("hungry_%s" % String(layout.id).replace(":", "_"))
 	data.grid_spacing = NAV_SPACING
 	data.point_radius = NAV_SPACING
 	data.source_digest = DotNpcNavData.digest_of([

@@ -110,6 +110,11 @@ var layout: HungryLayout = HungryLayout.none()
 enum Outgrown { ACCEPT, CAP, EJECT }
 var outgrown: int = Outgrown.ACCEPT
 
+## A layout variant set by whoever builds this world, over everything else. Empty: the
+## operator's `hungry_warrens_corners`, then the preset's own. Read once, when the layout is
+## built at setup — never mid-round: rocks moving under a monster are a different game.
+var layout_variant: String = ""
+
 ## How deep into a rock counts as wedged, in units: less than this is a piece brushing one.
 const WEDGED_DEPTH := 1.0
 
@@ -219,7 +224,9 @@ func setup() -> DotResult:
 	_scaled.mass_rules = tunables.mass_rules
 
 	# Before the field, because the field is culled against it.
-	layout = HungryLayout.for_id(preset.layout, arena.bounds)
+	layout = HungryLayout.for_id(
+		HungryLayout.with_variant(preset.layout, _chosen_layout_variant()), arena.bounds
+	)
 
 	field = HungryField.over(arena.bounds, world_seed)
 	field.food.target_count = preset.food_target
@@ -414,6 +421,22 @@ func adopt_world_size(size: Vector2) -> void:
 	field.set_bounds(arena.bounds)
 
 	DotLog.debug(CHANNEL, "adopted the authority's world size", {"size": size})
+
+
+## Which variant of the preset's layout to build: this world's own, then the operator's
+## cvar, then the preset's. The cvar is read off the server's console through the registry
+## (duck-typed, so a world with no dot-server — offline, a suite — simply has none). It is
+## registered by the module, which loads after the first mode's world, so it reaches the
+## next mode change rather than the first.
+func _chosen_layout_variant() -> String:
+	if layout_variant != "":
+		return layout_variant
+	var console: Object = DotRegistry.get_service(&"dot_console")
+	if console != null and console.has_method("get_string"):
+		var operator := str(console.call("get_string", "hungry_warrens_corners", "")).strip_edges().to_lower()
+		if HungryLayout.CORNER_VARIANTS.has(operator):
+			return "" if operator == HungryLayout.CORNER_DEFAULT else operator
+	return preset.layout_variant
 
 
 ## Adopts the authority's layout. Client side, from the hello.

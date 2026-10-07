@@ -38,7 +38,7 @@ const HungryWorld := preload("../game/hungry_world.gd")
 const SEED := 20260828
 const TICK_RATE := 60
 
-const CHECKS := 453
+const CHECKS := 454
 
 var _passed := 0
 var _failed := 0
@@ -1662,13 +1662,15 @@ func _test_the_warrens() -> void:
 	_check(identical, "and a second build of the same layout is the same rocks")
 
 	# Everything is inside the arena. A rock half outside the wall is a rock a player is
-	# pushed through the boundary by.
+	# pushed through the boundary by. A rock TOUCHING a wall is not crossing it — the open
+	# corners stand a hundredth of a unit into theirs so the gap is shut rather than a
+	# gate a hair wide — hence the twentieth of a unit allowed.
 	var inside := true
 
 	for block in layout.blocks:
 		var at := Vector2(block.x, block.y)
 
-		if not bounds.grow(-block.z).has_point(at):
+		if not bounds.grow(-block.z + 0.05).has_point(at):
 			inside = false
 
 	_check(inside, "and every one of them is wholly inside the arena")
@@ -5216,17 +5218,29 @@ func _test_the_reach() -> void:
 		print("        %s: %s" % [mode, big_note])
 
 		if preset.layout == HungryLayout.WARRENS:
-			# [b]A finding, not the design (2026-09-24).[/b] The corner rocks stand 481
-			# units off each wall and 491 off the nearest ring rock, so past a radius of
-			# about 240 — 903 mass, 56% of the winning mass — the perimeter lane is four
-			# lanes, and a leader is held in one quarter of it unless it splits. This file's
-			# CLAUDE.md said the lane was open to everybody for ever; the sweep says it is
-			# open to everybody the RING shuts out, which is the half the mode rests on, and
-			# that is what is asserted. Whether the corners should close it at all is a
-			# design question left open in the Queue.
+			# [b]The design since 2026-10-07 (Christian's call): a leader is not quartered.[/b]
+			# The corner rocks stood on the diagonal 481 off each wall, which shut anything
+			# over about 903 mass into one quarter of the perimeter lane. They stand against
+			# the walls now, a pinwheel, with the lane going round their inner side.
+			var ring_block: Vector3 = layout.blocks[layout.rings[0].x]
+			var ring_reach := Vector2(ring_block.x, ring_block.y).distance_to(bounds.get_center())
+			var outside_big := 0
+			for point in stranded_big:
+				if point.distance_to(bounds.get_center()) > ring_reach:
+					outside_big += 1
+			_check(
+				outside_big == 0,
+				"%s: a monster at the winning mass reaches the whole perimeter lane" % mode,
+				"%d stranded outside the ring at radius %.0f; %s" % [outside_big, won, big_note]
+			)
+
+			# [b]The original corners are a variant now (`hungry_warrens_corners quartered`),
+			# and they still do what they did:[/b] whoever the ring shuts out has the whole
+			# lane, and a leader is held in a quarter of it unless it splits.
+			var quartered := HungryLayout.for_id(&"warrens:quartered", bounds)
 			var corner_limit := INF
 
-			for gate in layout.gates(bounds):
+			for gate in quartered.gates(bounds):
 				var a: int = gate["a"]
 				var b: int = gate["b"]
 				var corner_first := HungryLayout.RING_COUNT
@@ -5236,25 +5250,28 @@ func _test_the_reach() -> void:
 
 			# Two grid cells under the limit: the sweep samples every 24 units, and the corner
 			# gaps leave 17 to spare at 8 under, which a grid can step straight over.
-			var lane := layout.reach(bounds, wall, corner_limit - 48.0)
-			var ring: Vector3 = layout.blocks[layout.rings[0].x]
-			var ring_at := Vector2(ring.x, ring.y).distance_to(bounds.get_center())
+			var lane := quartered.reach(bounds, wall, corner_limit - 48.0)
 			var outside := 0
 
 			for point in lane["stranded"]:
-				if point.distance_to(bounds.get_center()) > ring_at:
+				if point.distance_to(bounds.get_center()) > ring_reach:
 					outside += 1
 
-			var ring_admits := rules.mass_for(Array(layout.ring_gates(0)).min() * 0.5)
+			var held := 0
+			for point in quartered.reach(bounds, wall, won)["stranded"]:
+				if point.distance_to(bounds.get_center()) > ring_reach:
+					held += 1
+
+			var ring_admits := rules.mass_for(Array(quartered.ring_gates(0)).min() * 0.5)
 			var lane_admits := rules.mass_for(corner_limit)
 			_check(
-				outside == 0 and lane_admits > ring_admits * 1.5,
-				"%s: anybody the ring shuts out still has the whole perimeter lane" % mode,
-				"whole up to %.0f mass (radius %.0f), the ring shuts out %.0f; %d stranded outside the ring at radius %.0f; at the winning radius: %s"
-					% [lane_admits, corner_limit, ring_admits, outside, corner_limit - 48.0, big_note]
+				quartered.id == &"warrens:quartered" and outside == 0 and lane_admits > ring_admits * 1.5 and held > 0,
+				"%s, quartered: whoever the ring shuts out has the whole lane, and a leader only a quarter of it" % mode,
+				"whole up to %.0f mass (radius %.0f), the ring shuts out %.0f; %d stranded outside the ring below the limit; %d at the winning radius"
+					% [lane_admits, corner_limit, ring_admits, outside, held]
 			)
-			print("        %s: the lane is quartered past %.0f mass; %d of %d stranded at the winning radius" % [
-				mode, lane_admits, stranded_big.size(), big["free"]
+			print("        %s: open corners: %d stranded at the winning radius; quartered: the lane is quartered past %.0f mass" % [
+				mode, stranded_big.size(), lane_admits
 			])
 		elif preset.layout == HungryLayout.SHALLOWS:
 			# [b]The design, not a finding.[/b] A leader is shut out of every band behind

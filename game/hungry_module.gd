@@ -1606,6 +1606,14 @@ func _register_console() -> void:
 			world.outgrown = world.preset.outgrown if world.preset != null else 0
 	)
 
+	# The warrens' corner rocks: open (the default: a leader reaches the whole perimeter) or
+	# quartered (the original: past ~903 mass a leader is held in one quarter unless it
+	# splits). Empty: the mode's. Read by the world when it builds its layout, so it applies
+	# from the next mode change -- rocks do not move under a live round.
+	var _corners := add_cvar("hungry_warrens_corners", "",
+		"The warrens' corner rocks: open (a leader reaches the whole perimeter) or quartered (shut into a quarter past ~903 mass). Empty: the mode's. From the next mode change.",
+		DotConVar.FLAG_NOTIFY)
+
 	# Registered whether or not hunters are on, so a config that sets them does not
 	# depend on the order it turns things on in.
 	npc_skill.bind_cvars(add_cvar, DotConVar.FLAG_NOTIFY)

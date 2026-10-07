@@ -36,6 +36,12 @@ const HungryPreset := preload("hungry_preset.gd")
 ## both ends already know.
 @export var layout: StringName = HungryLayout.NONE
 
+## A variant of [member layout], or "" for its default — `quartered` puts the warrens'
+## corner rocks back where they shut a leader into one quarter of the lane. It travels with
+## the layout's name (`warrens:quartered`), so a client builds the same rocks. See
+## [constant HungryLayout.CORNER_VARIANTS].
+@export var layout_variant: String = ""
+
 @export_group("Growing")
 
 @export_range(10.0, 1000000.0, 10.0) var win_mass: float = HungryContent.WIN_MASS
