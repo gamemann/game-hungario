@@ -39,7 +39,7 @@ const SERVER_DIR := "user://hungry_dedicated"
 ## prints it to say which game this is, and nothing treats it as proof.
 const APP_URL := "hungario"
 
-const CHECKS := 209
+const CHECKS := 210
 
 var _passed := 0
 var _failed := 0
@@ -1693,6 +1693,10 @@ func _test_vote() -> void:
 			and maps.director.source.is_usable(),
 		"and a vote source over dot-server's own games",
 		"what a vote applies has to be the thing that actually changes the game"
+	)
+	_check(
+		maps.director != null and _server.hibernation_changed.is_connected(maps.director.set_hibernating),
+		"the vote's clock follows the server's hibernation: it waits while nobody is here"
 	)
 
 	# [b]`gauntlet` is off the ballot below three players, and that is what a catalogue

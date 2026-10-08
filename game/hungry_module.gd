@@ -554,7 +554,10 @@ func _build_progress() -> DotResult:
 func _build_maps() -> DotResult:
 	maps = HungryMaps.new()
 	maps.name = "Maps"
-	maps.player_count_fn = func() -> int: return world.player_ids().size()
+	# People, not bots: a bot never votes, so counting one raised every threshold, and a server
+	# of bots with nobody on it was never "empty" to the vote — its limit opened a ballot
+	# nobody answered instead of moving on (DotVoteRules.empty_choice).
+	maps.player_count_fn = func() -> int: return maxi(world.player_ids().size() - _bots.size(), 0)
 	maps.is_admin_fn = _voter_is_admin
 
 	# The drawn ballot, to each playing session with its own voter id — this game's voters
@@ -585,6 +588,11 @@ func _build_maps() -> DotResult:
 
 	maps.change_due.connect(_on_change_due)
 	maps.announced.connect(_on_vote_announced)
+
+	# The vote's clock stops while the server hibernates and starts again from the top when
+	# somebody joins. This module is not on DotGameModule, which does it for the games that are.
+	if maps.director != null:
+		maps.director.follow_hibernation(server)
 
 	# The cues and the countdown, to every client. The ballot goes out as chat through
 	# `announced`; a sound and a number a HUD counts are what chat cannot carry.
