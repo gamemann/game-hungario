@@ -5,9 +5,9 @@ const HungryWorld := preload("hungry_world.gd")
 
 ## Chat, moderation and voice, wired to this arena's people and this game's wire.
 ##
-## [b]The same three addons game-simple-lobby joins, and the proximity answers differ.[/b]
-## A lobby is a room you can see all of, so its voice is the whole room and only its text
-## has a "near" channel. An arena is not: a monster wide enough to fill the screen cannot
+## [b]The same three addons every game joins, and the proximity answers differ.[/b]
+## A room you can see all of would want voice for the whole room and a "near" channel
+## only for text. An arena is not: a monster wide enough to fill the screen cannot
 ## see the far side, and being able to hear somebody creeping up on you is information.
 ## So voice here is **proximity by default** and the range is the same number
 ## [HungryInterest] grows a view rectangle by, because hearing somebody you cannot possibly
@@ -486,7 +486,7 @@ func _name_of(peer_id: int) -> String:
 ## in the log and the monster it belongs to — and a client resolving it has a roster and
 ## nothing else. Two guests behind one device id share a uid, so keying by that puts the
 ## second person's words under the first person's name with every count still matching;
-## game-simple-lobby found that with two clients in one process.
+## that was found with two clients in one process.
 func _key_of(peer_id: int) -> String:
 	var player_id := _player_for(peer_id)
 	return str(player_id) if player_id != 0 else ""

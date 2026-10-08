@@ -384,8 +384,8 @@ dot-moderation's `key_for_peer` are separate seams because they answer different
 a punishment is against a person who will come back, so it is keyed by something that
 survives a reconnect; a chat line is attributed to somebody in this arena right now. Two
 guests behind one device id share a uid, so keying both by it puts the second person's
-words under the first person's name — game-simple-lobby found that with two clients in one
-process, and every count matched throughout.
+words under the first person's name, which was found with two clients in one process,
+with every count matching throughout.
 
 ## Voice is proximity here, and that is where this game and the lobby part company
 
@@ -393,8 +393,7 @@ An arena is bigger than a screen. Hearing somebody creeping up on you is informa
 hearing the whole server is noise. So `DotVoiceRouter.default_channel` is `PROXIMITY` and
 the range is the same number `HungryInterest` grows a view rectangle by — **being audible
 from outside your own screen is the same bug as being visible without being audible**.
-game-simple-lobby chose the opposite for a room you can see all of, and both are right for
-what they are.
+A room you can see all of wants the opposite, and both are right for what they are.
 
 Everything else is the lobby's reasoning: one `unreliable` RPC on its own channel serves a
 UDP desktop client and a TCP browser one, push-to-talk closes when a screen takes the
@@ -915,7 +914,7 @@ What it found was in dot-ui rather than here, and it applied to this game's brow
 
 The rank column is `0.4` here now. An omitted width is an equal share — which is the right default and the fix for the collapse — so a single-digit `#` would otherwise be given as much room as the mass, and the table opens with a sixth of itself blank. Only a picture says so.
 
-**The tool seeds its monsters on the first frame, not in `_initialize`.** `HungryWorld.setup()` adds its `DotMatch` as a child and a node added from `SceneTree._initialize` does not get `_ready` until the first frame, so the scoreboard does not exist yet and `add_player` dies on it with "Nonexistent function 'join' in base 'Nil'" — which reads like a missing method rather than like a node that has not started. game-simple-lobby's tool carries the same warning and this hit it anyway.
+**The tool seeds its monsters on the first frame, not in `_initialize`.** `HungryWorld.setup()` adds its `DotMatch` as a child and a node added from `SceneTree._initialize` does not get `_ready` until the first frame, so the scoreboard does not exist yet and `add_player` dies on it with "Nonexistent function 'join' in base 'Nil'" — which reads like a missing method rather than like a node that has not started.
 
 ## The chat screen became a chat box, and five games stopped having five of them
 

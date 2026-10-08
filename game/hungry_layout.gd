@@ -2067,7 +2067,7 @@ static func _fill(free: PackedByteArray, columns: int, rows: int, start: int, di
 ## straight back into it by the motor sixty times a second: the position ends up correct
 ## and the movement reads as packet loss, which is the worst way for a level to be wrong
 ## because it sends the next person to look at the netcode. [HungryHazards.resolve] says
-## the same thing about the same problem, and game-simple-lobby's furniture says it again.
+## the same thing about the same problem.
 ##
 ## Returns true when it moved something, which is what a check can assert on.
 ## How deep a circle at [param at] of [param radius] sits in the deepest rock it overlaps.

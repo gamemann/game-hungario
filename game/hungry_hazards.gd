@@ -177,7 +177,7 @@ func setup(p_authoritative: bool, p_world: HungryWorld) -> DotResult:
 	spawner.authoritative = true
 	# `world_ref` unset, so the bodies are parented here. They outlive a `changegame` the
 	# same way the netcode manager does, and asking a scene for its path before it is in a
-	# tree is the failure game-simple-lobby's screenshot found.
+	# tree is a failure only a screenshot found.
 	add_child(spawner)
 
 	spawner.removed.connect(_on_removed)
@@ -347,7 +347,7 @@ func _resolve_piece(monster: HungryMonster, piece: HungryPiece) -> void:
 				# accelerated straight back in by the motor sixty times a second — the
 				# position ends up correct and the movement reads as lag, which is the
 				# worst way for a level to be wrong because it sends the next person to
-				# the netcode. game-simple-lobby's furniture says the same thing.
+				# the netcode.
 				var normal := away / distance if distance > 0.001 else Vector2.RIGHT
 				piece.state.position = at + normal * clearance
 

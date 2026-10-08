@@ -114,8 +114,8 @@ func _process(_delta: float) -> bool:
 	# from `SceneTree._initialize` does not get its `_ready` until the first frame -- so the
 	# match's scoreboard does not exist yet and `add_player` dies on it. The error is
 	# "Nonexistent function 'join' in base 'Nil'", which reads like a missing method rather
-	# than like a node that has not started. game-simple-lobby's screenshot tool carries the
-	# same warning about the same shape, and this hit it anyway.
+	# than like a node that has not started. It is written down because it is
+	# easy to hit.
 	if not _seeded:
 		_seeded = true
 

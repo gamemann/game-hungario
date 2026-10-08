@@ -79,8 +79,7 @@ var services: HungryServices = null
 ## it from a path inside `load_module`, so there is no instance for a host to set a field on
 ## first. The suites point it at a directory of their own; before they could, every run of
 ## `dedicated` and `sandbox` wrote a test gag and the live tools' warnings to the real
-## store, 417 records by the time anybody counted. game-simple-lobby's
-## `RoomModule.punishments_path` is the same seam.
+## store, 417 records by the time anybody counted.
 static var punishments_path: String = HungryServices.PUNISHMENTS_PATH
 
 ## dot-moderation's live tools with this game's verbs (`HungryModTools`), and their

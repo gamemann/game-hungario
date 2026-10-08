@@ -12,7 +12,7 @@ const HungryEvents := preload("net/hungry_events.gd")
 ## not play twice in a row. dot-vote is what lets the players override it.
 ##
 ## [b]The swap itself stays dot-server's, and this file does not do it.[/b] That is the
-## same refusal game-simple-lobby makes about chat and for exactly the same reason: dot-map
+## same refusal every game here makes about chat, and for the same reason: dot-map
 ## ships `DotMapSyncHost`, which announces a change, waits for every peer to have the
 ## content and then swaps — and dot-server's `change_game` already announces, waits and
 ## swaps, with a content sync this family spent nine bugs getting right. Running both would
