@@ -38,7 +38,7 @@ const HungryWorld := preload("../game/hungry_world.gd")
 const SEED := 20260828
 const TICK_RATE := 60
 
-const CHECKS := 454
+const CHECKS := 456
 
 var _passed := 0
 var _failed := 0
@@ -5917,6 +5917,17 @@ func _test_interface() -> void:
 		stack.registered_ids().size() == 5,
 		"five screens register (%d)" % stack.registered_ids().size()
 	)
+
+	# The Tab board is dot-menu's: the world's monsters, in the world's order, held up by
+	# the stack while Tab is down.
+	var _up := stack.push(&"scoreboard")
+	var board_screen := stack.screen(&"scoreboard") as HungryMenus.ScoreboardScreen
+	var drawn: Array = board_screen.board.rows() if board_screen != null and board_screen.board != null else []
+	_check(board_screen != null and board_screen.board.is_open() and drawn.size() == world.leaderboard(20).size()
+		and int(drawn[0].get("rank", 0)) == 1 if not drawn.is_empty() else false,
+		"the Tab board draws every monster, ranked as the world ranks them", str(drawn))
+	var _down := stack.pop(&"scoreboard")
+	_check(board_screen != null and not board_screen.board.is_open(), "and goes when the stack takes it down")
 
 	# The loadout screen offers what the schema and this player's entitlements allow, and
 	# nothing else. A screen that filtered on its own would drift from the server the

@@ -45,7 +45,7 @@ There are six modes:
 | **Space** | Split |
 | **W** | Eject mass |
 | **Q** | Throw what you are holding |
-| **Tab** | Leaderboard |
+| **Tab** (hold) | The scoreboard: every monster ranked by mass, with their pieces, how long they have been on the server and their ping |
 | **Y** / **U** | Chat / chat with nearby players |
 | **Esc** | Menu, settings and loadout |
 

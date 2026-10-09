@@ -390,7 +390,7 @@ func _build_ui() -> void:
 	# is what puts them inside the safe area.
 	sampler.touch = hud.touch
 
-	_pause = HungryMenus.install(screens, world, bridge, ui_config, settings)
+	_pause = HungryMenus.install(screens, world, bridge, ui_config, settings, link if not _offline else null)
 
 	if _pause != null:
 		# Loadout, Settings and Controls are wired inside `install`, because each is only
@@ -1064,12 +1064,17 @@ func _unhandled_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 		return
 
-	if screens == null or not event.is_pressed() or event.is_echo():
+	# The Tab board, HELD as in every game here (it used to toggle): up on the press, down
+	# on the release, which is why it is read before the press-only filter below.
+	if screens != null and _is_key(event, KEY_TAB) and not event.is_echo():
+		if event.is_pressed() and not screens.is_open(&"scoreboard"):
+			var _up := screens.push(&"scoreboard")
+		elif not event.is_pressed() and screens.is_open(&"scoreboard"):
+			var _down := screens.pop(&"scoreboard")
+		get_viewport().set_input_as_handled()
 		return
 
-	if _is_key(event, KEY_TAB):
-		screens.toggle(&"scoreboard")
-		get_viewport().set_input_as_handled()
+	if screens == null or not event.is_pressed() or event.is_echo():
 		return
 
 	if _is_key(event, KEY_ESCAPE) and not screens.any_open():

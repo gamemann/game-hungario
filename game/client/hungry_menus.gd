@@ -98,7 +98,9 @@ class ControlsScreen extends DotScreen:
 ## and must not hide what they are looking at. That is exactly the distinction between
 ## [member DotScreen.blocks_input] and [member DotScreen.hides_below].
 class ScoreboardScreen extends DotScreen:
-	var table: DotTableView = null
+	## The board itself: dot-menu's, drawn in its theme. This screen is only what puts it
+	## on the stack, so the stack still owns its place among the others.
+	var board: DotMenuScoreboard = null
 
 	var _world: HungryWorld = null
 	var _bridge: HungryNetBridge = null
@@ -106,58 +108,70 @@ class ScoreboardScreen extends DotScreen:
 	func _screen_id() -> StringName:
 		return &"scoreboard"
 
-	func build(world: HungryWorld, bridge: HungryNetBridge) -> void:
+	## [param link] is the client link: its roster carries each player's time on the server
+	## and ping, which no client knows for anybody else. Null draws the world alone.
+	func build(world: HungryWorld, bridge: HungryNetBridge, link: Object = null) -> void:
 		_world = world
 		_bridge = bridge
 		blocks_input = false
 		hides_below = false
 		mouse_mode = DotScreen.Mouse.INHERIT
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
 
-		var container := PanelContainer.new()
-		container.set_anchors_preset(Control.PRESET_CENTER)
-		container.offset_left = -320.0
-		container.offset_right = 320.0
-		container.offset_top = -210.0
-		container.offset_bottom = 210.0
-		add_child(container)
-
-		table = DotTableView.new()
-		table.max_rows = 20
-		container.add_child(table)
-		# An explicit width on the narrow ones. An omitted width is an EQUAL share -- which
-		# is right, and is the fix for a column that used to collapse to nothing -- so a
-		# single-digit rank would otherwise be given as much room as the mass and the
-		# pieces, and the table opens with a sixth of itself blank. Only a picture says so.
-		table.set_columns([
-			{"key": &"rank", "title": "#", "width": 0.4, "align": HORIZONTAL_ALIGNMENT_RIGHT},
+		board = DotMenuScoreboard.new()
+		board.name = "Board"
+		board.title_text = "Hungario"
+		board.columns = [
+			{"key": &"rank", "title": "#", "width": 0.4, "kind": DotMenuScoreboard.KIND_NUMBER},
 			{"key": &"name", "title": "Monster", "width": 3.0},
-			{"key": &"mass", "title": "Mass", "align": HORIZONTAL_ALIGNMENT_RIGHT},
-			{"key": &"pieces", "title": "Pieces", "align": HORIZONTAL_ALIGNMENT_RIGHT},
-		])
+			{"key": &"mass", "title": "Mass", "kind": DotMenuScoreboard.KIND_NUMBER},
+			{"key": &"pieces", "title": "Pieces", "kind": DotMenuScoreboard.KIND_NUMBER},
+			{"key": &"seconds", "title": "Time", "kind": DotMenuScoreboard.KIND_DURATION},
+			{"key": &"ping", "title": "Ping", "kind": DotMenuScoreboard.KIND_PING},
+		]
+		# The world's own order (its leaderboard), so the rank column and the rows agree.
+		board.sort_with = func(a: Dictionary, b: Dictionary) -> bool: return int(a.get("rank", 0)) < int(b.get("rank", 0))
+		board.prepare = _rows_from_world
+		if link != null and link.has_signal(&"scoreboard_received"):
+			board.feed_from(link)
+		add_child(board)
 
 	func _on_push() -> void:
-		refresh()
+		if board != null:
+			board.open()
+
+	func _on_pop() -> void:
+		if board != null:
+			board.close()
 
 	func refresh() -> void:
-		if _world == null or table == null:
+		if board != null and board.is_open():
+			board.redraw()
+
+	## The rows are the world's — every monster, bots included, ranked by mass — with the
+	## server's time and ping merged in for the ones that are people.
+	func _rows_from_world(snap: Dictionary) -> void:
+		if _world == null:
 			return
-
-		var rows: Array[Dictionary] = []
-		var rank := 1
+		var roster := {}
+		for r in (snap.get("players", []) as Array):
+			if r is Dictionary:
+				roster[int(r.get("id", 0))] = r
 		var me := _bridge.local_player_id if _bridge != null else 0
-
+		var rows: Array = []
+		var rank := 1
 		for monster in _world.leaderboard(20):
+			var known: Dictionary = roster.get(monster.id, {})
 			rows.append({
-				&"rank": rank,
-				&"name": monster.display_name,
-				&"mass": int(monster.mass()),
-				&"pieces": monster.piece_count(),
-				"highlight": monster.id == me,
-				"colour": monster.colour,
+				"id": monster.id, "rank": rank, "name": monster.display_name,
+				"mass": int(monster.mass()), "pieces": monster.piece_count(),
+				"seconds": int(known.get("seconds", -1)), "ping": int(known.get("ping", -1)),
+				"you": monster.id == me, "bot": not roster.is_empty() and known.is_empty(),
 			})
 			rank += 1
-
-		table.set_rows(rows)
+		snap["players"] = rows
+		if not snap.has("server"):
+			snap["server"] = {"name": "Hungario"}
 
 
 ## What you bring in: a starting throwable and a trait.
@@ -346,7 +360,8 @@ static func install(
 	world: HungryWorld,
 	bridge: HungryNetBridge,
 	ui_config: DotUiConfig,
-	game_config: DotConfig = null
+	game_config: DotConfig = null,
+	link: Object = null
 ) -> DotPauseScreen:
 	var loadout := LoadoutScreen.new()
 	loadout.name = "Loadout"
@@ -401,7 +416,7 @@ static func install(
 
 	var scoreboard := ScoreboardScreen.new()
 	scoreboard.name = "Scoreboard"
-	scoreboard.build(world, bridge)
+	scoreboard.build(world, bridge, link)
 	stack.register(scoreboard)
 
 	# Every button but Leave is about the stack and nothing else, so it is wired here. What

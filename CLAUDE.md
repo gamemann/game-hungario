@@ -721,7 +721,7 @@ find . -name '*.gd' -not -path './.godot/*' -not -path './addons/*' | while read
     godot --headless --path . --check-only --script "res://${f#./}"
 done
 
-godot --headless --path . res://examples/headless_round.tscn   # 450 — the game
+godot --headless --path . res://examples/headless_round.tscn   # 456 — the game
 godot --headless --path . res://examples/headless_stack.tscn   #  24 checks
 godot --headless --path . res://examples/headless_net.tscn     # 159 — the netcode
 godot --headless --path . res://examples/dedicated.tscn        # 208 — a real DotServer
@@ -795,7 +795,7 @@ godot --headless --path . res://examples/dedicated.tscn -- --serve
 godot --headless --path . res://tools/publish_avatars.tscn
 ```
 
-Mouse steers — near is slow, far is full speed. Space splits, W ejects, Q throws, Tab is
+Mouse steers — near is slow, far is full speed. Space splits, W ejects, Q throws, Tab (held) is
 the board, Enter is chat, Escape is the menu and the loadout. In the server console,
 `hungry_bots 6` fills it.
 
@@ -905,6 +905,10 @@ dot-ui grew `DotPauseScreen` and `DotSettingsScreen` because four clients here h
 The settings screen brought something the copy did not have: a `ScrollContainer`. A `DotSettingsPanel` is as tall as the document it was handed, and a document is as long as somebody's `@export` list — without one the column grows past the bottom of the window and takes Apply, Revert and Back with it, which every structural assertion passes through happily and only a picture shows. It is in `screenshot_menus.sh` now for exactly that reason; it was not before.
 
 `ControlsScreen`, `ScoreboardScreen` and `LoadoutScreen` stay this game's own, because each is about something dot-ui has no opinion about: a key map, a match's scoreboard, and a loadout schema.
+
+## The scoreboard is dot-menu's (2026-10-09)
+
+`ScoreboardScreen` is still a screen on this game's stack, so the stack keeps its place among the others, but what it draws is dot-menu's `DotMenuScoreboard`, the board every game here has now. Its rows are the world's: every monster, bots included, in the world's own leaderboard order, with the server's roster merged in by id for the ones that are people — how long they have been on and their ping, which no client knew for anybody else. Tab is HELD now, as in every other game (it toggled). The settings, pause, controls and loadout screens are unchanged: this game's settings are a `DotConfig` (see *Settings are a `DotConfig`*), and dot-menu's menu is a view of dot-settings, so moving them is a change to how this game stores settings, not to its screens. `headless_round` asserts the board draws every monster in rank order and leaves with the stack. The first render had the rows sorted by mass and then name while the rank column came from the leaderboard, so a draw read 2, 3, 1, 5, 4; it sorts by the world's rank now.
 
 ## The menus, rendered and looked at
 
