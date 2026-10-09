@@ -1716,8 +1716,8 @@ func _test_vote() -> void:
 		"a cooldown of one over four modes is what stops the same one twice running"
 	)
 
-	# Rocking the vote with one player. The threshold is a fraction of the head count and
-	# `rtv_min_players` is 2, so this is refused — which is the check: a refusal that
+	# Rocking the vote with one player, two minutes before `rtv_delay_sec` allows it, so
+	# this is refused — which is the check: a refusal that
 	# arrives is a rule that ran, and dot-vote shipped a version where rocking the vote was
 	# refused for ever on the deployment that depends on it.
 	var rocked := maps.director.rock_the_vote(&"1")
